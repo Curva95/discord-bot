@@ -13,7 +13,7 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
-client.once('ready', () => {
+client.once('clientReady', () => {
     console.log(`Bot online como ${client.user.tag}!`);
 });
 
