@@ -2,16 +2,22 @@ const { Client, GatewayIntentBits, Partials, PermissionsBitField } = require("di
 const express = require("express");
 const mysql = require("mysql2/promise");
 
-// === CONFIGURAÇÃO MYSQL (RAILWAY INTERNA) ===
 let pool;
+
 (async () => {
   try {
-    const mysqlUrl = process.env.MYSQL_URL;
-    if (!mysqlUrl) throw new Error("MYSQL_URL não encontrada!");
+    // Railway MySQL interno (rede privada)
+    pool = await mysql.createPool({
+      host: "mysql.railway.internal",
+      user: process.env.MYSQLUSER || "root",
+      password: process.env.MYSQLPASSWORD,
+      database: process.env.MYSQLDATABASE || "railway",
+      port: process.env.MYSQLPORT || 3306,
+      connectionLimit: 10,
+    });
 
-    pool = await mysql.createPool(mysqlUrl + "?connectionLimit=10");
     const [rows] = await pool.query("SELECT NOW() AS now");
-    console.log("🗄️ Conectado ao MySQL com sucesso!");
+    console.log("🗄️ Conectado ao MySQL interno com sucesso!");
     console.log("🕒 Hora atual:", rows[0].now);
   } catch (err) {
     console.error("❌ Erro ao conectar ao MySQL:", err);
