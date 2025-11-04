@@ -196,7 +196,7 @@ client.on("interactionCreate", async interaction => {
   const { commandName } = interaction;
 
   if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
-    return interaction.reply({ content: "❌ Apenas administradores podem usar este comando!", ephemeral: true });
+    return interaction.reply({ content: "❌ Only Admins!", ephemeral: true });
   }
 
   await interaction.deferReply({ ephemeral: true });
@@ -230,13 +230,13 @@ client.on("interactionCreate", async interaction => {
         .setColor(corNumero)
         .addFields(
           {
-            name: '🎯 **Como Verificar-se**',
-            value: `Reaja com ${emojiInput} abaixo para receber o cargo **${cargo.name}** e ter acesso ao servidor!`,
+            name: '🎯 **Get Your Role**',
+            value: `React with ${emojiInput} below to receive the **${cargo.name}** role and get access to the server!`,
             inline: false
           }
         )
         .setFooter({ 
-          text: `${interaction.guild.name} • Sistema de Verificação`,
+          text: `${interaction.guild.name} • Verification System`,
           iconURL: interaction.guild.iconURL()
         })
         .setThumbnail(interaction.guild.iconURL())
@@ -249,7 +249,7 @@ client.on("interactionCreate", async interaction => {
       try {
         await mensagemEmbed.react(emojiInput);
       } catch (reactError) {
-        await interaction.editReply("❌ Erro ao adicionar a reação. Verifique se o emoji é válido!");
+        await interaction.editReply("❌ Error!");
         return;
       }
 
