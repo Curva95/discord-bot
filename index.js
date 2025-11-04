@@ -46,15 +46,18 @@ async function initDB() {
     // ==============================
     // Atualizar tabela reactions automaticamente
     // ==============================
-    await pool.query(`
-      ALTER TABLE reactions
-      ADD COLUMN IF NOT EXISTS guild_id VARCHAR(50) NOT NULL
-    `);
+// Verifica se coluna 'guild_id' existe
+const [columns] = await pool.query("SHOW COLUMNS FROM reactions LIKE 'guild_id'");
+if (columns.length === 0) {
+  await pool.query("ALTER TABLE reactions ADD COLUMN guild_id VARCHAR(50) NOT NULL");
+}
 
-    await pool.query(`
-      ALTER TABLE reactions
-      ADD UNIQUE KEY IF NOT EXISTS uniq_reaction (guild_id, message_id, emoji)
-    `);
+// Verifica se índice único existe
+const [indexes] = await pool.query("SHOW INDEX FROM reactions WHERE Key_name = 'uniq_reaction'");
+if (indexes.length === 0) {
+  await pool.query("ALTER TABLE reactions ADD UNIQUE KEY uniq_reaction (guild_id, message_id, emoji)");
+}
+
 
     console.log("✅ Tabela 'reactions' atualizada com sucesso!");
   } catch (err) {
