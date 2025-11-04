@@ -91,11 +91,6 @@ const commands = [
         .setRequired(true)
     )
     .addStringOption(option =>
-      option.setName("cor")
-        .setDescription("Cor do embed em HEX (ex: #FF0000)")
-        .setRequired(false)
-    )
-    .addStringOption(option =>
       option.setName("emoji")
         .setDescription("Emoji para a reação")
         .setRequired(true)
@@ -104,6 +99,11 @@ const commands = [
       option.setName("cargo")
         .setDescription("Cargo que será dado ao reagir")
         .setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName("cor")
+        .setDescription("Cor do embed em HEX (ex: #FF0000)")
+        .setRequired(false)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
@@ -180,9 +180,9 @@ client.on("interactionCreate", async interaction => {
     const canal = interaction.options.getChannel("canal");
     const titulo = interaction.options.getString("titulo");
     const descricao = interaction.options.getString("descricao");
-    const cor = interaction.options.getString("cor") || "#5865F2";
     const emojiInput = interaction.options.getString("emoji");
     const cargo = interaction.options.getRole("cargo");
+    const cor = interaction.options.getString("cor") || "#5865F2";
 
     // Verificar se o canal é de texto
     if (!canal.isTextBased()) {
