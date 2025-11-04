@@ -44,33 +44,8 @@ async function initDB() {
     console.log("🗄️ Conectado ao MySQL com sucesso!");
     console.log("🕒 Hora atual:", rows[0].now);
 
-    // ==============================
-    // Criar tabelas se não existirem
-    // ==============================
-    await pool.execute(`
-      CREATE TABLE IF NOT EXISTS reactions (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        guild_id VARCHAR(50) NOT NULL,
-        message_id VARCHAR(50) NOT NULL,
-        emoji VARCHAR(100) NOT NULL,
-        role_id VARCHAR(50) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE KEY uniq_reaction (guild_id, message_id, emoji)
-      )
-    `);
-
-    await pool.execute(`
-      CREATE TABLE IF NOT EXISTS log_channels (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        guild_id VARCHAR(50) NOT NULL UNIQUE,
-        channel_id VARCHAR(50) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    console.log("✅ Tabelas verificadas/criadas com sucesso!");
   } catch (err) {
-    console.error("❌ Erro ao conectar ou criar tabelas no MySQL:", err);
+    console.error("❌ Erro ao conectar ao MySQL:", err);
   }
 }
 
@@ -200,13 +175,13 @@ client.on("interactionCreate", async interaction => {
 
   await interaction.deferReply({ ephemeral: true });
 
-  // Comando: CRIARREACTION (NOVO)
+  // Comando: CRIARREACTION
   if (commandName === "criarreaction") {
     const canal = interaction.options.getChannel("canal");
     const titulo = interaction.options.getString("titulo");
     const descricao = interaction.options.getString("descricao");
     const cor = interaction.options.getString("cor") || "#5865F2";
-    const emoji = interaction.options.getString("emoji");
+    const emojiInput = interaction.options.getString("emoji");
     const cargo = interaction.options.getRole("cargo");
 
     // Verificar se o canal é de texto
@@ -215,13 +190,16 @@ client.on("interactionCreate", async interaction => {
     }
 
     try {
+      // Converter cor HEX para número
+      const corNumero = parseInt(cor.replace('#', ''), 16);
+
       // Criar embed
       const embed = new EmbedBuilder()
         .setTitle(titulo)
         .setDescription(descricao)
-        .setColor(cor)
+        .setColor(corNumero)
         .setFooter({ 
-          text: `Reaja com ${emoji} para receber o cargo ${cargo.name}` 
+          text: `Reaja com ${emojiInput} para receber o cargo ${cargo.name}` 
         })
         .setTimestamp();
 
@@ -229,27 +207,32 @@ client.on("interactionCreate", async interaction => {
       const mensagem = await canal.send({ embeds: [embed] });
       
       // Adicionar reação
-      await mensagem.react(emoji);
+      try {
+        await mensagem.react(emojiInput);
+      } catch (reactError) {
+        await interaction.editReply("❌ Erro ao adicionar a reação. Verifique se o emoji é válido e o bot tem permissões!");
+        return;
+      }
 
       // Salvar no banco de dados
       await pool.query(
         `INSERT INTO reactions (guild_id, message_id, emoji, role_id) 
          VALUES (?, ?, ?, ?) 
          ON DUPLICATE KEY UPDATE emoji = ?, role_id = ?`,
-        [interaction.guildId, mensagem.id, emoji, cargo.id, emoji, cargo.id]
+        [interaction.guildId, mensagem.id, emojiInput, cargo.id, emojiInput, cargo.id]
       );
 
       await interaction.editReply(
         `✅ **Sistema de Reaction Role criado!**\n` +
         `📝 **Mensagem enviada em:** ${canal}\n` +
-        `🎯 **Emoji:** ${emoji}\n` +
+        `🎯 **Emoji:** ${emojiInput}\n` +
         `👑 **Cargo:** ${cargo.name}\n` +
         `🆔 **ID da Mensagem:** \`${mensagem.id}\``
       );
 
     } catch (err) {
-      console.error(err);
-      await interaction.editReply("❌ Erro ao criar o sistema de reaction role. Verifique se o emoji é válido!");
+      console.error("Erro no criarreaction:", err);
+      await interaction.editReply("❌ Erro ao criar o sistema de reaction role. Verifique as permissões do bot!");
     }
   }
 
@@ -352,7 +335,7 @@ client.on("messageReactionAdd", async (reaction, user) => {
         if (logChannel) {
           const embed = new EmbedBuilder()
             .setTitle("🎯 Reaction Role Ativado")
-            .setColor("#00FF00")
+            .setColor(0x00FF00)
             .setDescription(`**Usuário:** ${user} (${user.tag})\n**Cargo:** <@&${roleId}>\n**Reação:** ${reaction.emoji}`)
             .setTimestamp();
 
@@ -407,7 +390,7 @@ client.on("messageReactionRemove", async (reaction, user) => {
         if (logChannel) {
           const embed = new EmbedBuilder()
             .setTitle("🗑️ Reaction Role Removido")
-            .setColor("#FF0000")
+            .setColor(0xFF0000)
             .setDescription(`**Usuário:** ${user} (${user.tag})\n**Cargo:** <@&${roleId}>\n**Reação:** ${reaction.emoji}`)
             .setTimestamp();
 
