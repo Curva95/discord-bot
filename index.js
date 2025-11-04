@@ -57,7 +57,8 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMessageReactions,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers
   ],
 });
 
@@ -134,6 +135,11 @@ const commands = [
     .setName("dbstatus")
     .setDescription("🧠 Mostra o estado da base de dados")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName("sync")
+    .setDescription("🔄 Sincroniza comandos no servidor")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(cmd => cmd.toJSON());
 
 // ==========================
@@ -146,15 +152,23 @@ client.once("ready", async () => {
   const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 
   try {
-    console.log("🔄 Atualizando comandos globais...");
+    console.log("🔄 Registrando comandos por servidor...");
     
-    // Forçar atualização completa dos comandos
-    await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+    // Registrar comandos em CADA SERVIDOR (mais rápido)
+    for (const guild of client.guilds.cache.values()) {
+      try {
+        await rest.put(
+          Routes.applicationGuildCommands(client.user.id, guild.id),
+          { body: commands }
+        );
+        console.log(`✅ Comandos registrados em: ${guild.name}`);
+      } catch (error) {
+        console.error(`❌ Erro em ${guild.name}:`, error);
+      }
+    }
     
-    console.log("✅ Comandos globais atualizados com sucesso!");
-    console.log("📋 Comandos registrados:", commands.map(cmd => cmd.name));
   } catch (err) {
-    console.error("❌ Erro ao registrar comandos globais:", err);
+    console.error("❌ Erro ao registrar comandos:", err);
   }
 });
 
@@ -181,7 +195,6 @@ client.on("interactionCreate", async interaction => {
     const cargo = interaction.options.getRole("cargo");
     const corInput = interaction.options.getString("cor") || "#5865F2";
 
-    // Verificar se o canal é de texto
     if (!canal.isTextBased()) {
       return interaction.editReply("❌ O canal precisa ser um canal de texto!");
     }
@@ -192,10 +205,10 @@ client.on("interactionCreate", async interaction => {
       if (corInput.startsWith('#')) {
         corNumero = parseInt(corInput.replace('#', ''), 16);
       } else {
-        corNumero = 0x5865F2; // Cor padrão azul do Discord
+        corNumero = 0x5865F2;
       }
 
-      // Criar embed BONITO E ORGANIZADO
+      // Criar embed
       const embed = new EmbedBuilder()
         .setTitle(`📜 ${titulo}`)
         .setDescription(mensagem)
@@ -221,7 +234,6 @@ client.on("interactionCreate", async interaction => {
       try {
         await mensagemEmbed.react(emojiInput);
       } catch (reactError) {
-        console.error("Erro na reação:", reactError);
         await interaction.editReply("❌ Erro ao adicionar a reação. Verifique se o emoji é válido!");
         return;
       }
@@ -235,7 +247,7 @@ client.on("interactionCreate", async interaction => {
       );
 
       await interaction.editReply(
-        `✅ **Sistema de Reaction Role criado com sucesso!**\n` +
+        `✅ **Sistema de Reaction Role criado!**\n` +
         `📝 **Canal:** ${canal}\n` +
         `🎯 **Emoji:** ${emojiInput}\n` +
         `👑 **Cargo:** ${cargo.name}\n` +
@@ -248,14 +260,13 @@ client.on("interactionCreate", async interaction => {
     }
   }
 
-  // Comando: SETREACTION (existente)
+  // Comando: SETREACTION
   else if (commandName === "setreaction") {
     const msgId = interaction.options.getString("mensagem_id");
     const emoji = interaction.options.getString("emoji");
     const role = interaction.options.getRole("cargo");
 
     try {
-      // Tentar adicionar a reação na mensagem
       const canal = interaction.channel;
       const mensagem = await canal.messages.fetch(msgId);
       await mensagem.react(emoji);
@@ -303,37 +314,75 @@ client.on("interactionCreate", async interaction => {
       await interaction.editReply("❌ Erro na base de dados.");
     }
   }
+
+  // Comando: SYNC (NOVO)
+  else if (commandName === "sync") {
+    try {
+      const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
+      await rest.put(
+        Routes.applicationGuildCommands(client.user.id, interaction.guildId),
+        { body: commands }
+      );
+      await interaction.editReply("✅ Comandos sincronizados neste servidor!");
+    } catch (err) {
+      console.error(err);
+      await interaction.editReply("❌ Erro ao sincronizar comandos.");
+    }
+  }
 });
 
 // ==========================
-// 🎯 EVENTO REACTION ROLE
+// 🎯 EVENTO REACTION ROLE CORRIGIDO
 // ==========================
 client.on("messageReactionAdd", async (reaction, user) => {
+  // Ignorar bots
   if (user.bot) return;
 
-  if (reaction.partial) {
-    try {
-      await reaction.fetch();
-    } catch (err) {
-      console.error('Erro ao buscar reação:', err);
-      return;
-    }
-  }
-
-  const guild = reaction.message.guild;
-  if (!guild) return;
-
   try {
+    // Se a reação for partial, buscar dados completos
+    if (reaction.partial) {
+      try {
+        await reaction.fetch();
+      } catch (error) {
+        console.error('Erro ao buscar reação:', error);
+        return;
+      }
+    }
+
+    // Se a mensagem for partial, buscar dados completos
+    if (reaction.message.partial) {
+      try {
+        await reaction.message.fetch();
+      } catch (error) {
+        console.error('Erro ao buscar mensagem:', error);
+        return;
+      }
+    }
+
+    const { guild, id } = reaction.message;
+
+    // Verificar se existe guild
+    if (!guild) return;
+
+    // Buscar no banco de dados
     const emojiIdentifier = reaction.emoji.id ? `${reaction.emoji.name}:${reaction.emoji.id}` : reaction.emoji.name;
     
+    console.log(`🔍 Procurando reação: Guild=${guild.id}, Message=${id}, Emoji=${emojiIdentifier}`);
+
     const [rows] = await pool.query(
       "SELECT role_id FROM reactions WHERE guild_id = ? AND message_id = ? AND emoji = ?",
-      [guild.id, reaction.message.id, emojiIdentifier]
+      [guild.id, id, emojiIdentifier]
     );
 
-    if (rows.length === 0) return;
+    if (rows.length === 0) {
+      console.log("❌ Reação não encontrada no banco de dados");
+      return;
+    }
 
     const roleId = rows[0].role_id;
+    console.log(`✅ Reação encontrada! Cargo: ${roleId}`);
+
+    // Buscar membro
     const member = await guild.members.fetch(user.id);
     
     if (member && roleId) {
@@ -366,14 +415,8 @@ client.on("messageReactionAdd", async (reaction, user) => {
 client.on("messageReactionRemove", async (reaction, user) => {
   if (user.bot) return;
 
-  if (reaction.partial) {
-    try {
-      await reaction.fetch();
-    } catch (err) {
-      console.error('Erro ao buscar reação:', err);
-      return;
-    }
-  }
+  if (reaction.partial) await reaction.fetch();
+  if (reaction.message.partial) await reaction.message.fetch();
 
   const guild = reaction.message.guild;
   if (!guild) return;
