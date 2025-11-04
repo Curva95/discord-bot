@@ -1,9 +1,16 @@
 // ==========================
-// 🤖 BOT DISCORD + MYSQL
+// 🤖 BOT DISCORD + MYSQL (CommonJS)
 // ==========================
-import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } from "discord.js";
-import mysql from "mysql2/promise";
-import express from "express";
+const { 
+  Client, 
+  GatewayIntentBits, 
+  REST, 
+  Routes, 
+  SlashCommandBuilder, 
+  PermissionFlagsBits 
+} = require("discord.js");
+const mysql = require("mysql2/promise");
+const express = require("express");
 
 // ==========================
 // 🌐 CONFIGURAÇÃO EXPRESS
