@@ -62,47 +62,40 @@ const client = new Client({
 });
 
 // ==========================
-// Mapeia ready para clientReady
-// ==========================
-client.once("ready", () => {
-  client.emit("clientReady");
-});
-
-// ==========================
 // 🧩 COMANDOS
 // ==========================
 const commands = [
   new SlashCommandBuilder()
     .setName("criarreaction")
-    .setDescription("🎯 Cria uma mensagem embed com reaction role automática")
+    .setDescription("🎯 Cria mensagem embed com reaction role automática")
     .addChannelOption(option =>
       option.setName("canal")
-        .setDescription("Canal onde a mensagem será enviada")
+        .setDescription("Canal onde enviar a mensagem")
         .setRequired(true)
     )
     .addStringOption(option =>
       option.setName("titulo")
-        .setDescription("Título do embed")
+        .setDescription("Título da mensagem")
         .setRequired(true)
     )
     .addStringOption(option =>
       option.setName("descricao")
-        .setDescription("Descrição do embed")
+        .setDescription("Descrição da mensagem")
         .setRequired(true)
     )
     .addStringOption(option =>
       option.setName("emoji")
-        .setDescription("Emoji para a reação")
+        .setDescription("Emoji para reação")
         .setRequired(true)
     )
     .addRoleOption(option =>
       option.setName("cargo")
-        .setDescription("Cargo que será dado ao reagir")
+        .setDescription("Cargo a ser dado")
         .setRequired(true)
     )
     .addStringOption(option =>
       option.setName("cor")
-        .setDescription("Cor do embed em HEX (ex: #FF0000)")
+        .setDescription("Cor do embed (ex: #FF0000)")
         .setRequired(false)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -146,16 +139,20 @@ const commands = [
 // ==========================
 // CLIENT READY
 // ==========================
-client.once("clientReady", async () => {
+client.once("ready", async () => {
   console.log(`✅ Bot online como ${client.user.tag}!`);
   await initDB();
 
   const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 
   try {
-    console.log("⏳ Registrando comandos globais...");
+    console.log("🔄 Atualizando comandos globais...");
+    
+    // Forçar atualização completa dos comandos
     await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-    console.log("✅ Comandos globais registrados com sucesso!");
+    
+    console.log("✅ Comandos globais atualizados com sucesso!");
+    console.log("📋 Comandos registrados:", commands.map(cmd => cmd.name));
   } catch (err) {
     console.error("❌ Erro ao registrar comandos globais:", err);
   }
@@ -182,7 +179,7 @@ client.on("interactionCreate", async interaction => {
     const descricao = interaction.options.getString("descricao");
     const emojiInput = interaction.options.getString("emoji");
     const cargo = interaction.options.getRole("cargo");
-    const cor = interaction.options.getString("cor") || "#5865F2";
+    const corInput = interaction.options.getString("cor") || "#5865F2";
 
     // Verificar se o canal é de texto
     if (!canal.isTextBased()) {
@@ -191,7 +188,12 @@ client.on("interactionCreate", async interaction => {
 
     try {
       // Converter cor HEX para número
-      const corNumero = parseInt(cor.replace('#', ''), 16);
+      let corNumero;
+      if (corInput.startsWith('#')) {
+        corNumero = parseInt(corInput.replace('#', ''), 16);
+      } else {
+        corNumero = 0x5865F2; // Cor padrão azul do Discord
+      }
 
       // Criar embed
       const embed = new EmbedBuilder()
@@ -210,7 +212,8 @@ client.on("interactionCreate", async interaction => {
       try {
         await mensagem.react(emojiInput);
       } catch (reactError) {
-        await interaction.editReply("❌ Erro ao adicionar a reação. Verifique se o emoji é válido e o bot tem permissões!");
+        console.error("Erro na reação:", reactError);
+        await interaction.editReply("❌ Erro ao adicionar a reação. Verifique se o emoji é válido!");
         return;
       }
 
@@ -232,7 +235,7 @@ client.on("interactionCreate", async interaction => {
 
     } catch (err) {
       console.error("Erro no criarreaction:", err);
-      await interaction.editReply("❌ Erro ao criar o sistema de reaction role. Verifique as permissões do bot!");
+      await interaction.editReply("❌ Erro ao criar o sistema de reaction role!");
     }
   }
 
