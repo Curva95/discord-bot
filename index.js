@@ -122,6 +122,21 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   new SlashCommandBuilder()
+    .setName("removerreaction")
+    .setDescription("🗑️ Remove uma mensagem de reaction role")
+    .addStringOption(option =>
+      option.setName("mensagem_id")
+        .setDescription("ID da mensagem para remover")
+        .setRequired(true)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName("listarreactions")
+    .setDescription("📋 Lista todas as reactions configuradas")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
     .setName("setlogchannel")
     .setDescription("📝 Define o canal onde as logs serão enviadas")
     .addChannelOption(option =>
@@ -285,6 +300,73 @@ client.on("interactionCreate", async interaction => {
     }
   }
 
+  // Comando: REMOVERREACTION (NOVO)
+  else if (commandName === "removerreaction") {
+    const msgId = interaction.options.getString("mensagem_id");
+
+    try {
+      // Verificar se a mensagem existe no banco
+      const [rows] = await pool.query(
+        "SELECT * FROM reactions WHERE guild_id = ? AND message_id = ?",
+        [interaction.guildId, msgId]
+      );
+
+      if (rows.length === 0) {
+        return interaction.editReply("❌ Mensagem não encontrada no banco de dados!");
+      }
+
+      // Tentar apagar a mensagem do Discord
+      try {
+        const canal = interaction.channel;
+        const mensagem = await canal.messages.fetch(msgId);
+        await mensagem.delete();
+      } catch (discordError) {
+        console.log("⚠️ Não foi possível apagar a mensagem do Discord, mas será removida do banco");
+      }
+
+      // Remover do banco de dados
+      await pool.query(
+        "DELETE FROM reactions WHERE guild_id = ? AND message_id = ?",
+        [interaction.guildId, msgId]
+      );
+
+      await interaction.editReply(`✅ Reaction role removida!\n**Mensagem ID:** \`${msgId}\`\n**Foi removida do banco de dados.**`);
+
+    } catch (err) {
+      console.error(err);
+      await interaction.editReply("❌ Erro ao remover a reaction role!");
+    }
+  }
+
+  // Comando: LISTARREACTIONS (NOVO)
+  else if (commandName === "listarreactions") {
+    try {
+      const [rows] = await pool.query(
+        "SELECT message_id, emoji, role_id FROM reactions WHERE guild_id = ?",
+        [interaction.guildId]
+      );
+
+      if (rows.length === 0) {
+        return interaction.editReply("📭 Nenhuma reaction role configurada neste servidor.");
+      }
+
+      let lista = "**📋 Reaction Roles Configuradas:**\n\n";
+      
+      for (const row of rows) {
+        lista += `**Mensagem ID:** \`${row.message_id}\`\n`;
+        lista += `**Emoji:** ${row.emoji}\n`;
+        lista += `**Cargo:** <@&${row.role_id}>\n`;
+        lista += "━━━━━━━━━━━━━━━━━━━━\n";
+      }
+
+      await interaction.editReply(lista);
+
+    } catch (err) {
+      console.error(err);
+      await interaction.editReply("❌ Erro ao listar reactions!");
+    }
+  }
+
   // Comando: setlogchannel
   else if (commandName === "setlogchannel") {
     const canal = interaction.options.getChannel("canal");
@@ -315,7 +397,7 @@ client.on("interactionCreate", async interaction => {
     }
   }
 
-  // Comando: SYNC (NOVO)
+  // Comando: SYNC
   else if (commandName === "sync") {
     try {
       const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
@@ -332,39 +414,18 @@ client.on("interactionCreate", async interaction => {
 });
 
 // ==========================
-// 🎯 EVENTO REACTION ROLE CORRIGIDO
+// 🎯 EVENTO REACTION ROLE
 // ==========================
 client.on("messageReactionAdd", async (reaction, user) => {
-  // Ignorar bots
   if (user.bot) return;
 
   try {
-    // Se a reação for partial, buscar dados completos
-    if (reaction.partial) {
-      try {
-        await reaction.fetch();
-      } catch (error) {
-        console.error('Erro ao buscar reação:', error);
-        return;
-      }
-    }
-
-    // Se a mensagem for partial, buscar dados completos
-    if (reaction.message.partial) {
-      try {
-        await reaction.message.fetch();
-      } catch (error) {
-        console.error('Erro ao buscar mensagem:', error);
-        return;
-      }
-    }
+    if (reaction.partial) await reaction.fetch();
+    if (reaction.message.partial) await reaction.message.fetch();
 
     const { guild, id } = reaction.message;
-
-    // Verificar se existe guild
     if (!guild) return;
 
-    // Buscar no banco de dados
     const emojiIdentifier = reaction.emoji.id ? `${reaction.emoji.name}:${reaction.emoji.id}` : reaction.emoji.name;
     
     console.log(`🔍 Procurando reação: Guild=${guild.id}, Message=${id}, Emoji=${emojiIdentifier}`);
@@ -382,7 +443,6 @@ client.on("messageReactionAdd", async (reaction, user) => {
     const roleId = rows[0].role_id;
     console.log(`✅ Reação encontrada! Cargo: ${roleId}`);
 
-    // Buscar membro
     const member = await guild.members.fetch(user.id);
     
     if (member && roleId) {
