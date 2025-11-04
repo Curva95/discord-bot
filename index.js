@@ -79,8 +79,8 @@ const commands = [
         .setRequired(true)
     )
     .addStringOption(option =>
-      option.setName("descricao")
-        .setDescription("Descrição da mensagem")
+      option.setName("mensagem")
+        .setDescription("Conteúdo da mensagem (suporta Markdown)")
         .setRequired(true)
     )
     .addStringOption(option =>
@@ -176,7 +176,7 @@ client.on("interactionCreate", async interaction => {
   if (commandName === "criarreaction") {
     const canal = interaction.options.getChannel("canal");
     const titulo = interaction.options.getString("titulo");
-    const descricao = interaction.options.getString("descricao");
+    const mensagem = interaction.options.getString("mensagem");
     const emojiInput = interaction.options.getString("emoji");
     const cargo = interaction.options.getRole("cargo");
     const corInput = interaction.options.getString("cor") || "#5865F2";
@@ -195,22 +195,31 @@ client.on("interactionCreate", async interaction => {
         corNumero = 0x5865F2; // Cor padrão azul do Discord
       }
 
-      // Criar embed
+      // Criar embed BONITO E ORGANIZADO
       const embed = new EmbedBuilder()
-        .setTitle(titulo)
-        .setDescription(descricao)
+        .setTitle(`📜 ${titulo}`)
+        .setDescription(mensagem)
         .setColor(corNumero)
+        .addFields(
+          {
+            name: '🎯 **Como Verificar-se**',
+            value: `Reaja com ${emojiInput} abaixo para receber o cargo **${cargo.name}** e ter acesso ao servidor!`,
+            inline: false
+          }
+        )
         .setFooter({ 
-          text: `Reaja com ${emojiInput} para receber o cargo ${cargo.name}` 
+          text: `${interaction.guild.name} • Sistema de Verificação`,
+          iconURL: interaction.guild.iconURL()
         })
+        .setThumbnail(interaction.guild.iconURL())
         .setTimestamp();
 
       // Enviar mensagem
-      const mensagem = await canal.send({ embeds: [embed] });
+      const mensagemEmbed = await canal.send({ embeds: [embed] });
       
       // Adicionar reação
       try {
-        await mensagem.react(emojiInput);
+        await mensagemEmbed.react(emojiInput);
       } catch (reactError) {
         console.error("Erro na reação:", reactError);
         await interaction.editReply("❌ Erro ao adicionar a reação. Verifique se o emoji é válido!");
@@ -222,15 +231,15 @@ client.on("interactionCreate", async interaction => {
         `INSERT INTO reactions (guild_id, message_id, emoji, role_id) 
          VALUES (?, ?, ?, ?) 
          ON DUPLICATE KEY UPDATE emoji = ?, role_id = ?`,
-        [interaction.guildId, mensagem.id, emojiInput, cargo.id, emojiInput, cargo.id]
+        [interaction.guildId, mensagemEmbed.id, emojiInput, cargo.id, emojiInput, cargo.id]
       );
 
       await interaction.editReply(
-        `✅ **Sistema de Reaction Role criado!**\n` +
-        `📝 **Mensagem enviada em:** ${canal}\n` +
+        `✅ **Sistema de Reaction Role criado com sucesso!**\n` +
+        `📝 **Canal:** ${canal}\n` +
         `🎯 **Emoji:** ${emojiInput}\n` +
         `👑 **Cargo:** ${cargo.name}\n` +
-        `🆔 **ID da Mensagem:** \`${mensagem.id}\``
+        `🆔 **ID da Mensagem:** \`${mensagemEmbed.id}\``
       );
 
     } catch (err) {
