@@ -1,6 +1,8 @@
 // ==========================
 // 🤖 BOT DISCORD + MYSQL (CommonJS)
 // ==========================
+require('dotenv').config(); // Carrega variáveis do .env
+
 const { 
   Client, 
   GatewayIntentBits, 
@@ -36,11 +38,27 @@ async function initDB() {
       connectionLimit: 5,
       queueLimit: 0,
     });
+
     const [rows] = await pool.query("SELECT NOW() AS now");
     console.log("🗄️ Conectado ao MySQL com sucesso!");
     console.log("🕒 Hora atual:", rows[0].now);
+
+    // ==============================
+    // Atualizar tabela reactions automaticamente
+    // ==============================
+    await pool.query(`
+      ALTER TABLE reactions
+      ADD COLUMN IF NOT EXISTS guild_id VARCHAR(50) NOT NULL
+    `);
+
+    await pool.query(`
+      ALTER TABLE reactions
+      ADD UNIQUE KEY IF NOT EXISTS uniq_reaction (guild_id, message_id, emoji)
+    `);
+
+    console.log("✅ Tabela 'reactions' atualizada com sucesso!");
   } catch (err) {
-    console.error("❌ Erro ao conectar ao MySQL:", err);
+    console.error("❌ Erro ao conectar ou atualizar o MySQL:", err);
   }
 }
 
@@ -61,37 +79,42 @@ const client = new Client({
 const commands = [
   new SlashCommandBuilder()
     .setName("setreaction")
-    .setDescription("📌 Define uma mensagem e emoji para reações automáticas.")
+    .setDescription("📌 Configura uma mensagem de regras e o cargo que será dado ao reagir")
     .addStringOption(option =>
       option.setName("mensagem_id")
-        .setDescription("ID da mensagem para adicionar reações")
+        .setDescription("ID da mensagem para adicionar a reação")
         .setRequired(true)
     )
     .addStringOption(option =>
       option.setName("emoji")
-        .setDescription("Emoji que será usado na reação")
+        .setDescription("Emoji que concede o cargo")
+        .setRequired(true)
+    )
+    .addRoleOption(option =>
+      option.setName("cargo")
+        .setDescription("Cargo a ser atribuído ao reagir")
         .setRequired(true)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   new SlashCommandBuilder()
     .setName("setlogchannel")
-    .setDescription("📝 Define o canal onde as logs serão enviadas.")
+    .setDescription("📝 Define o canal onde as logs serão enviadas")
     .addChannelOption(option =>
       option.setName("canal")
-        .setDescription("Canal onde serão enviadas as logs")
+        .setDescription("Canal de logs")
         .setRequired(true)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   new SlashCommandBuilder()
     .setName("dbstatus")
-    .setDescription("🧠 Mostra o estado da base de dados.")
+    .setDescription("🧠 Mostra o estado da base de dados")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(cmd => cmd.toJSON());
 
 // ==========================
-// 🚀 LOGIN E REGISTO DE COMANDOS (Guilda para testes)
+// 🚀 LOGIN E REGISTO DE COMANDOS GLOBAIS
 // ==========================
 client.once("ready", async () => {
   console.log(`✅ Bot online como ${client.user.tag}!`);
@@ -100,14 +123,11 @@ client.once("ready", async () => {
   const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 
   try {
-    console.log("⏳ Registrando comandos na guilda para testes...");
-    await rest.put(
-      Routes.applicationGuildCommands(client.user.id, process.env.GUILD_ID),
-      { body: commands }
-    );
-    console.log("✅ Comandos registrados na guilda!");
+    console.log("⏳ Registrando comandos globais...");
+    await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+    console.log("✅ Comandos globais registrados com sucesso!");
   } catch (err) {
-    console.error("❌ Erro ao registrar comandos:", err);
+    console.error("❌ Erro ao registrar comandos globais:", err);
   }
 });
 
@@ -119,25 +139,27 @@ client.on("interactionCreate", async (interaction) => {
 
   const { commandName } = interaction;
 
-  // Apenas admins
   if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
     return interaction.reply({ content: "❌ Apenas administradores podem usar este comando!", ephemeral: true });
   }
 
-  // Defer reply para evitar timeout
   await interaction.deferReply({ ephemeral: true });
 
   // Comando: setreaction
   if (commandName === "setreaction") {
     const msgId = interaction.options.getString("mensagem_id");
     const emoji = interaction.options.getString("emoji");
+    const role = interaction.options.getRole("cargo");
 
-    // Aqui podes salvar no MySQL (exemplo)
     try {
-      await pool.query("INSERT INTO reactions (message_id, emoji) VALUES (?, ?) ON DUPLICATE KEY UPDATE emoji = ?", [msgId, emoji, emoji]);
-      await interaction.editReply({
-        content: `✅ Reação configurada com sucesso!\n**Mensagem ID:** \`${msgId}\`\n**Emoji:** ${emoji}`
-      });
+      await pool.query(
+        `INSERT INTO reactions (guild_id, message_id, emoji, role_id) 
+         VALUES (?, ?, ?, ?) 
+         ON DUPLICATE KEY UPDATE emoji = ?, role_id = ?`,
+        [interaction.guildId, msgId, emoji, role.id, emoji, role.id]
+      );
+
+      await interaction.editReply(`✅ Reação configurada!\n**Mensagem ID:** \`${msgId}\`\n**Emoji:** ${emoji}\n**Cargo:** ${role.name}`);
     } catch (err) {
       console.error(err);
       await interaction.editReply("❌ Erro ao salvar a reação no banco.");
@@ -147,9 +169,16 @@ client.on("interactionCreate", async (interaction) => {
   // Comando: setlogchannel
   else if (commandName === "setlogchannel") {
     const canal = interaction.options.getChannel("canal");
+
     try {
-      await pool.query("INSERT INTO log_channels (guild_id, channel_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE channel_id = ?", [interaction.guildId, canal.id, canal.id]);
-      await interaction.editReply({ content: `📝 Canal de logs definido: ${canal}` });
+      await pool.query(
+        `INSERT INTO log_channels (guild_id, channel_id) 
+         VALUES (?, ?) 
+         ON DUPLICATE KEY UPDATE channel_id = ?`,
+        [interaction.guildId, canal.id, canal.id]
+      );
+
+      await interaction.editReply(`📝 Canal de logs definido: ${canal}`);
     } catch (err) {
       console.error(err);
       await interaction.editReply("❌ Erro ao salvar o canal de logs.");
@@ -169,14 +198,47 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 // ==========================
+// 🎯 EVENTO REACTION ROLE
+// ==========================
+client.on("messageReactionAdd", async (reaction, user) => {
+  if (user.bot) return;
+
+  if (reaction.partial) await reaction.fetch();
+  const guild = reaction.message.guild;
+  if (!guild) return;
+
+  try {
+    const [rows] = await pool.query(
+      "SELECT role_id FROM reactions WHERE guild_id = ? AND message_id = ? AND emoji = ?",
+      [guild.id, reaction.message.id, reaction.emoji.name]
+    );
+
+    if (rows.length === 0) return;
+
+    const roleId = rows[0].role_id;
+    const member = await guild.members.fetch(user.id);
+    if (member && roleId) {
+      await member.roles.add(roleId);
+    }
+
+    // Log opcional
+    const [logRows] = await pool.query("SELECT channel_id FROM log_channels WHERE guild_id = ?", [guild.id]);
+    if (logRows.length > 0) {
+      const logChannel = guild.channels.cache.get(logRows[0].channel_id);
+      if (logChannel) {
+        logChannel.send(`✅ ${user.tag} recebeu o cargo <@&${roleId}> ao reagir com ${reaction.emoji.name}`);
+      }
+    }
+  } catch (err) {
+    console.error("❌ Erro no reaction role:", err);
+  }
+});
+
+// ==========================
 // 🔑 LOGIN FINAL
 // ==========================
 if (!process.env.TOKEN) {
   console.error("❌ ERRO: TOKEN não encontrado!");
-  process.exit(1);
-}
-if (!process.env.GUILD_ID) {
-  console.error("❌ ERRO: GUILD_ID não definido para testes!");
   process.exit(1);
 }
 
