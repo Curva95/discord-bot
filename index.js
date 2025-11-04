@@ -1,7 +1,7 @@
 // ==========================
 // 🤖 BOT DISCORD + MYSQL (CommonJS)
 // ==========================
-require('dotenv').config(); // Carrega variáveis do .env
+require('dotenv').config();
 
 const { 
   Client, 
@@ -44,20 +44,17 @@ async function initDB() {
     console.log("🕒 Hora atual:", rows[0].now);
 
     // ==============================
-    // Atualizar tabela reactions automaticamente
+    // Atualizar tabela reactions
     // ==============================
-// Verifica se coluna 'guild_id' existe
-const [columns] = await pool.query("SHOW COLUMNS FROM reactions LIKE 'guild_id'");
-if (columns.length === 0) {
-  await pool.query("ALTER TABLE reactions ADD COLUMN guild_id VARCHAR(50) NOT NULL");
-}
+    const [columns] = await pool.query("SHOW COLUMNS FROM reactions LIKE 'guild_id'");
+    if (columns.length === 0) {
+      await pool.query("ALTER TABLE reactions ADD COLUMN guild_id VARCHAR(50) NOT NULL");
+    }
 
-// Verifica se índice único existe
-const [indexes] = await pool.query("SHOW INDEX FROM reactions WHERE Key_name = 'uniq_reaction'");
-if (indexes.length === 0) {
-  await pool.query("ALTER TABLE reactions ADD UNIQUE KEY uniq_reaction (guild_id, message_id, emoji)");
-}
-
+    const [indexes] = await pool.query("SHOW INDEX FROM reactions WHERE Key_name = 'uniq_reaction'");
+    if (indexes.length === 0) {
+      await pool.query("ALTER TABLE reactions ADD UNIQUE KEY uniq_reaction (guild_id, message_id, emoji)");
+    }
 
     console.log("✅ Tabela 'reactions' atualizada com sucesso!");
   } catch (err) {
@@ -77,7 +74,14 @@ const client = new Client({
 });
 
 // ==========================
-// 🧩 DEFINIÇÃO DOS COMANDOS
+// Mapeia ready para clientReady
+// ==========================
+client.once("ready", () => {
+  client.emit("clientReady");
+});
+
+// ==========================
+// 🧩 COMANDOS
 // ==========================
 const commands = [
   new SlashCommandBuilder()
@@ -117,9 +121,9 @@ const commands = [
 ].map(cmd => cmd.toJSON());
 
 // ==========================
-// 🚀 LOGIN E REGISTO DE COMANDOS GLOBAIS
+// CLIENT READY
 // ==========================
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   console.log(`✅ Bot online como ${client.user.tag}!`);
   await initDB();
 
@@ -135,9 +139,9 @@ client.once("ready", async () => {
 });
 
 // ==========================
-// 🧠 EXECUÇÃO DOS COMANDOS
+// INTERAÇÕES
 // ==========================
-client.on("interactionCreate", async (interaction) => {
+client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
   const { commandName } = interaction;
@@ -238,7 +242,7 @@ client.on("messageReactionAdd", async (reaction, user) => {
 });
 
 // ==========================
-// 🔑 LOGIN FINAL
+// LOGIN
 // ==========================
 if (!process.env.TOKEN) {
   console.error("❌ ERRO: TOKEN não encontrado!");
