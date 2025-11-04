@@ -24,8 +24,11 @@ let pool;
     try {
         pool = new Pool({
             connectionString: process.env.DATABASE_URL,
-            ssl: { rejectUnauthorized: false }
+            ssl: process.env.DATABASE_URL.includes("railway.app")
+                ? { rejectUnauthorized: false }
+                : false
         });
+
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS reactions (
@@ -68,6 +71,7 @@ client.on('messageCreate', async message => {
         if (!pool) return message.reply('⚠️ O banco de dados ainda está a inicializar.');
 
         try {
+            console.log('🔌 Testando conexão com o banco:', process.env.DATABASE_URL);
             const result = await pool.query('SELECT NOW()');
             message.reply(`🟢 Banco de dados online!\nHora: ${result.rows[0].now}`);
         } catch (err) {
