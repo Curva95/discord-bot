@@ -9,7 +9,8 @@ const {
   REST, 
   Routes, 
   SlashCommandBuilder, 
-  PermissionFlagsBits 
+  PermissionFlagsBits,
+  EmbedBuilder
 } = require("discord.js");
 const mysql = require("mysql2/promise");
 const express = require("express");
@@ -44,21 +45,32 @@ async function initDB() {
     console.log("🕒 Hora atual:", rows[0].now);
 
     // ==============================
-    // Atualizar tabela reactions
+    // Criar tabelas se não existirem
     // ==============================
-    const [columns] = await pool.query("SHOW COLUMNS FROM reactions LIKE 'guild_id'");
-    if (columns.length === 0) {
-      await pool.query("ALTER TABLE reactions ADD COLUMN guild_id VARCHAR(50) NOT NULL");
-    }
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS reactions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        guild_id VARCHAR(50) NOT NULL,
+        message_id VARCHAR(50) NOT NULL,
+        emoji VARCHAR(100) NOT NULL,
+        role_id VARCHAR(50) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_reaction (guild_id, message_id, emoji)
+      )
+    `);
 
-    const [indexes] = await pool.query("SHOW INDEX FROM reactions WHERE Key_name = 'uniq_reaction'");
-    if (indexes.length === 0) {
-      await pool.query("ALTER TABLE reactions ADD UNIQUE KEY uniq_reaction (guild_id, message_id, emoji)");
-    }
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS log_channels (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        guild_id VARCHAR(50) NOT NULL UNIQUE,
+        channel_id VARCHAR(50) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
-    console.log("✅ Tabela 'reactions' atualizada com sucesso!");
+    console.log("✅ Tabelas verificadas/criadas com sucesso!");
   } catch (err) {
-    console.error("❌ Erro ao conectar ou atualizar o MySQL:", err);
+    console.error("❌ Erro ao conectar ou criar tabelas no MySQL:", err);
   }
 }
 
@@ -69,7 +81,8 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMessageReactions
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.MessageContent
   ],
 });
 
@@ -85,8 +98,43 @@ client.once("ready", () => {
 // ==========================
 const commands = [
   new SlashCommandBuilder()
+    .setName("criarreaction")
+    .setDescription("🎯 Cria uma mensagem embed com reaction role automática")
+    .addChannelOption(option =>
+      option.setName("canal")
+        .setDescription("Canal onde a mensagem será enviada")
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName("titulo")
+        .setDescription("Título do embed")
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName("descricao")
+        .setDescription("Descrição do embed")
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName("cor")
+        .setDescription("Cor do embed em HEX (ex: #FF0000)")
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName("emoji")
+        .setDescription("Emoji para a reação")
+        .setRequired(true)
+    )
+    .addRoleOption(option =>
+      option.setName("cargo")
+        .setDescription("Cargo que será dado ao reagir")
+        .setRequired(true)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
     .setName("setreaction")
-    .setDescription("📌 Configura uma mensagem de regras e o cargo que será dado ao reagir")
+    .setDescription("📌 Configura reação em uma mensagem existente")
     .addStringOption(option =>
       option.setName("mensagem_id")
         .setDescription("ID da mensagem para adicionar a reação")
@@ -152,13 +200,71 @@ client.on("interactionCreate", async interaction => {
 
   await interaction.deferReply({ ephemeral: true });
 
-  // Comando: setreaction
-  if (commandName === "setreaction") {
+  // Comando: CRIARREACTION (NOVO)
+  if (commandName === "criarreaction") {
+    const canal = interaction.options.getChannel("canal");
+    const titulo = interaction.options.getString("titulo");
+    const descricao = interaction.options.getString("descricao");
+    const cor = interaction.options.getString("cor") || "#5865F2";
+    const emoji = interaction.options.getString("emoji");
+    const cargo = interaction.options.getRole("cargo");
+
+    // Verificar se o canal é de texto
+    if (!canal.isTextBased()) {
+      return interaction.editReply("❌ O canal precisa ser um canal de texto!");
+    }
+
+    try {
+      // Criar embed
+      const embed = new EmbedBuilder()
+        .setTitle(titulo)
+        .setDescription(descricao)
+        .setColor(cor)
+        .setFooter({ 
+          text: `Reaja com ${emoji} para receber o cargo ${cargo.name}` 
+        })
+        .setTimestamp();
+
+      // Enviar mensagem
+      const mensagem = await canal.send({ embeds: [embed] });
+      
+      // Adicionar reação
+      await mensagem.react(emoji);
+
+      // Salvar no banco de dados
+      await pool.query(
+        `INSERT INTO reactions (guild_id, message_id, emoji, role_id) 
+         VALUES (?, ?, ?, ?) 
+         ON DUPLICATE KEY UPDATE emoji = ?, role_id = ?`,
+        [interaction.guildId, mensagem.id, emoji, cargo.id, emoji, cargo.id]
+      );
+
+      await interaction.editReply(
+        `✅ **Sistema de Reaction Role criado!**\n` +
+        `📝 **Mensagem enviada em:** ${canal}\n` +
+        `🎯 **Emoji:** ${emoji}\n` +
+        `👑 **Cargo:** ${cargo.name}\n` +
+        `🆔 **ID da Mensagem:** \`${mensagem.id}\``
+      );
+
+    } catch (err) {
+      console.error(err);
+      await interaction.editReply("❌ Erro ao criar o sistema de reaction role. Verifique se o emoji é válido!");
+    }
+  }
+
+  // Comando: SETREACTION (existente)
+  else if (commandName === "setreaction") {
     const msgId = interaction.options.getString("mensagem_id");
     const emoji = interaction.options.getString("emoji");
     const role = interaction.options.getRole("cargo");
 
     try {
+      // Tentar adicionar a reação na mensagem
+      const canal = interaction.channel;
+      const mensagem = await canal.messages.fetch(msgId);
+      await mensagem.react(emoji);
+
       await pool.query(
         `INSERT INTO reactions (guild_id, message_id, emoji, role_id) 
          VALUES (?, ?, ?, ?) 
@@ -169,7 +275,7 @@ client.on("interactionCreate", async interaction => {
       await interaction.editReply(`✅ Reação configurada!\n**Mensagem ID:** \`${msgId}\`\n**Emoji:** ${emoji}\n**Cargo:** ${role.name}`);
     } catch (err) {
       console.error(err);
-      await interaction.editReply("❌ Erro ao salvar a reação no banco.");
+      await interaction.editReply("❌ Erro ao configurar a reação. Verifique o ID da mensagem e se o emoji é válido!");
     }
   }
 
@@ -210,34 +316,107 @@ client.on("interactionCreate", async interaction => {
 client.on("messageReactionAdd", async (reaction, user) => {
   if (user.bot) return;
 
-  if (reaction.partial) await reaction.fetch();
+  if (reaction.partial) {
+    try {
+      await reaction.fetch();
+    } catch (err) {
+      console.error('Erro ao buscar reação:', err);
+      return;
+    }
+  }
+
   const guild = reaction.message.guild;
   if (!guild) return;
 
   try {
+    const emojiIdentifier = reaction.emoji.id ? `${reaction.emoji.name}:${reaction.emoji.id}` : reaction.emoji.name;
+    
     const [rows] = await pool.query(
       "SELECT role_id FROM reactions WHERE guild_id = ? AND message_id = ? AND emoji = ?",
-      [guild.id, reaction.message.id, reaction.emoji.name]
+      [guild.id, reaction.message.id, emojiIdentifier]
     );
 
     if (rows.length === 0) return;
 
     const roleId = rows[0].role_id;
     const member = await guild.members.fetch(user.id);
+    
     if (member && roleId) {
       await member.roles.add(roleId);
-    }
+      console.log(`✅ Cargo ${roleId} adicionado a ${user.tag}`);
 
-    // Log opcional
-    const [logRows] = await pool.query("SELECT channel_id FROM log_channels WHERE guild_id = ?", [guild.id]);
-    if (logRows.length > 0) {
-      const logChannel = guild.channels.cache.get(logRows[0].channel_id);
-      if (logChannel) {
-        logChannel.send(`✅ ${user.tag} recebeu o cargo <@&${roleId}> ao reagir com ${reaction.emoji.name}`);
+      // Log no canal de logs
+      const [logRows] = await pool.query("SELECT channel_id FROM log_channels WHERE guild_id = ?", [guild.id]);
+      if (logRows.length > 0) {
+        const logChannel = guild.channels.cache.get(logRows[0].channel_id);
+        if (logChannel) {
+          const embed = new EmbedBuilder()
+            .setTitle("🎯 Reaction Role Ativado")
+            .setColor("#00FF00")
+            .setDescription(`**Usuário:** ${user} (${user.tag})\n**Cargo:** <@&${roleId}>\n**Reação:** ${reaction.emoji}`)
+            .setTimestamp();
+
+          await logChannel.send({ embeds: [embed] });
+        }
       }
     }
   } catch (err) {
     console.error("❌ Erro no reaction role:", err);
+  }
+});
+
+// ==========================
+// 🗑️ REMOVER CARGO AO RETIRAR REAÇÃO
+// ==========================
+client.on("messageReactionRemove", async (reaction, user) => {
+  if (user.bot) return;
+
+  if (reaction.partial) {
+    try {
+      await reaction.fetch();
+    } catch (err) {
+      console.error('Erro ao buscar reação:', err);
+      return;
+    }
+  }
+
+  const guild = reaction.message.guild;
+  if (!guild) return;
+
+  try {
+    const emojiIdentifier = reaction.emoji.id ? `${reaction.emoji.name}:${reaction.emoji.id}` : reaction.emoji.name;
+    
+    const [rows] = await pool.query(
+      "SELECT role_id FROM reactions WHERE guild_id = ? AND message_id = ? AND emoji = ?",
+      [guild.id, reaction.message.id, emojiIdentifier]
+    );
+
+    if (rows.length === 0) return;
+
+    const roleId = rows[0].role_id;
+    const member = await guild.members.fetch(user.id);
+    
+    if (member && roleId) {
+      await member.roles.remove(roleId);
+      console.log(`❌ Cargo ${roleId} removido de ${user.tag}`);
+
+      // Log no canal de logs
+      const [logRows] = await pool.query("SELECT channel_id FROM log_channels WHERE guild_id = ?", [guild.id]);
+      if (logRows.length > 0) {
+        const logChannel = guild.channels.cache.get(logRows[0].channel_id);
+        if (logChannel) {
+          const embed = new EmbedBuilder()
+            .setTitle("🗑️ Reaction Role Removido")
+            .setColor("#FF0000")
+            .setDescription(`**Usuário:** ${user} (${user.tag})\n**Cargo:** <@&${roleId}>\n**Reação:** ${reaction.emoji}`)
+            .setTimestamp();
+
+          await logChannel.send({ embeds: [embed] });
+        }
+      }
+    }
+  } catch (err) {
+    console.error("❌ Erro ao remover cargo:", err);
   }
 });
 
