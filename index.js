@@ -1,13 +1,21 @@
 const { Client, GatewayIntentBits } = require('discord.js');
-const { Pool } = require('pg');
+const mysql = require('mysql2/promise');
 const express = require('express');
 
-if (!process.env.TOKEN || !process.env.DATABASE_URL) {
-    console.error('❌ ERRO: TOKEN ou DATABASE_URL não encontrados!');
+// --- Verificação das variáveis de ambiente ---
+if (
+    !process.env.TOKEN ||
+    !process.env.MYSQL_HOST ||
+    !process.env.MYSQL_USER ||
+    !process.env.MYSQL_PASSWORD ||
+    !process.env.MYSQL_DATABASE
+) {
+    console.error('❌ ERRO: TOKEN ou variáveis MySQL em falta!');
+    console.error('Necessário: MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE');
     process.exit(1);
 }
 
-// --- Criação do cliente Discord ---
+// --- Cliente Discord ---
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -18,41 +26,45 @@ const client = new Client({
     ]
 });
 
-// --- Conexão ao banco PostgreSQL ---
+// --- Conexão MySQL ---
 let pool;
 (async () => {
     try {
-        pool = new Pool({
-            connectionString: process.env.DATABASE_URL,
-            ssl: process.env.DATABASE_URL.includes("railway.app")
-                ? { rejectUnauthorized: false }
-                : false
+        pool = mysql.createPool({
+            host: process.env.MYSQL_HOST,
+            user: process.env.MYSQL_USER,
+            password: process.env.MYSQL_PASSWORD,
+            database: process.env.MYSQL_DATABASE,
+            port: process.env.MYSQL_PORT || 3306,
+            waitForConnections: true,
+            connectionLimit: 10,
+            queueLimit: 0
         });
 
-
+        // Cria tabelas se não existirem
         await pool.query(`
             CREATE TABLE IF NOT EXISTS reactions (
-                id SERIAL PRIMARY KEY,
-                message_id TEXT NOT NULL,
-                emoji TEXT NOT NULL,
-                role_id TEXT NOT NULL
-            );
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                message_id VARCHAR(50) NOT NULL,
+                emoji VARCHAR(50) NOT NULL,
+                role_id VARCHAR(50) NOT NULL
+            )
         `);
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS log_channels (
-                guild_id TEXT PRIMARY KEY,
-                channel_id TEXT NOT NULL
-            );
+                guild_id VARCHAR(50) PRIMARY KEY,
+                channel_id VARCHAR(50) NOT NULL
+            )
         `);
 
-        console.log('🗄️ Banco de dados inicializado com sucesso!');
+        console.log('🗄️ Conectado ao MySQL com sucesso!');
     } catch (error) {
-        console.error('❌ Erro ao inicializar o banco de dados:', error);
+        console.error('❌ Erro ao conectar ao MySQL:', error);
     }
 })();
 
-// --- Evento principal de inicialização ---
+// --- Evento Ready ---
 client.once('clientReady', () => {
     console.log(`✅ Bot online como ${client.user.tag}!`);
 });
@@ -71,11 +83,10 @@ client.on('messageCreate', async message => {
         if (!pool) return message.reply('⚠️ O banco de dados ainda está a inicializar.');
 
         try {
-            console.log('🔌 Testando conexão com o banco:', process.env.DATABASE_URL);
-            const result = await pool.query('SELECT NOW()');
-            message.reply(`🟢 Banco de dados online!\nHora: ${result.rows[0].now}`);
+            const [rows] = await pool.query('SELECT NOW() AS now');
+            message.reply(`🟢 Banco de dados MySQL online!\nHora: ${rows[0].now}`);
         } catch (err) {
-            console.error('❌ Erro ao conectar ao banco:', err);
+            console.error('❌ Erro ao conectar ao MySQL:', err);
             message.reply('🔴 Erro ao conectar ao banco de dados!');
         }
     }
@@ -86,7 +97,7 @@ client.on('messageCreate', async message => {
         if (!channel) return message.reply('❌ Usa: `!setlog #canal`');
 
         await pool.query(
-            'INSERT INTO log_channels (guild_id, channel_id) VALUES ($1, $2) ON CONFLICT (guild_id) DO UPDATE SET channel_id = $2;',
+            'INSERT INTO log_channels (guild_id, channel_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE channel_id = VALUES(channel_id);',
             [message.guild.id, channel.id]
         );
 
@@ -103,7 +114,7 @@ client.on('messageCreate', async message => {
             return message.reply('❌ Usa: `!setreaction <message_id> <emoji> @cargo`');
 
         await pool.query(
-            'INSERT INTO reactions (message_id, emoji, role_id) VALUES ($1, $2, $3)',
+            'INSERT INTO reactions (message_id, emoji, role_id) VALUES (?, ?, ?)',
             [messageId, emoji, role.id]
         );
 
@@ -111,22 +122,26 @@ client.on('messageCreate', async message => {
     }
 });
 
-// --- Reação adicionada ---
+// --- Quando alguém reage ---
 client.on('messageReactionAdd', async (reaction, user) => {
     if (user.bot) return;
     if (reaction.partial) await reaction.fetch();
 
-    const res = await pool.query(
-        'SELECT * FROM reactions WHERE message_id = $1 AND emoji = $2',
-        [reaction.message.id, reaction.emoji.name]
-    );
+    try {
+        const [rows] = await pool.query(
+            'SELECT * FROM reactions WHERE message_id = ? AND emoji = ?',
+            [reaction.message.id, reaction.emoji.name]
+        );
 
-    if (res.rowCount > 0) {
-        const roleId = res.rows[0].role_id;
-        const member = await reaction.message.guild.members.fetch(user.id);
-        await member.roles.add(roleId);
+        if (rows.length > 0) {
+            const roleId = rows[0].role_id;
+            const member = await reaction.message.guild.members.fetch(user.id);
+            await member.roles.add(roleId);
 
-        console.log(`✅ Cargo atribuído a ${user.tag}`);
+            console.log(`✅ Cargo atribuído a ${user.tag}`);
+        }
+    } catch (error) {
+        console.error('❌ Erro ao atribuir cargo:', error);
     }
 });
 
@@ -134,7 +149,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
 client.on('error', console.error);
 process.on('unhandledRejection', console.error);
 
-// --- Express (para Railway manter ativo) ---
+// --- Express (Railway "keep alive") ---
 const app = express();
 app.get('/', (_, res) => res.send('Bot online!'));
 app.listen(3000, () => console.log('🌐 Servidor web rodando na porta 3000'));
