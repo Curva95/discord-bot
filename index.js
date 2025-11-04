@@ -2,152 +2,125 @@ const { Client, GatewayIntentBits, Partials, PermissionsBitField } = require("di
 const express = require("express");
 const mysql = require("mysql2/promise");
 
+// 🔐 Verifica variáveis essenciais
+if (!process.env.TOKEN) {
+  console.error("❌ ERRO: TOKEN não encontrado!");
+  process.exit(1);
+}
+if (!process.env.MYSQLUSER || !process.env.MYSQLPASSWORD || !process.env.MYSQLDATABASE) {
+  console.error("❌ ERRO: Variáveis do MySQL ausentes!");
+  process.exit(1);
+}
+
+// 🌐 Conexão ao MySQL (via endpoint público Railway)
 let pool;
 
 (async () => {
   try {
-    // Railway MySQL interno (rede privada)
     pool = await mysql.createPool({
-      host: "mysql.railway.internal",
-      user: process.env.MYSQLUSER || "root",
+      host: "centerbeam.proxy.rlwy.net",
+      port: 32486,
+      user: process.env.MYSQLUSER,
       password: process.env.MYSQLPASSWORD,
-      database: process.env.MYSQLDATABASE || "railway",
-      port: process.env.MYSQLPORT || 3306,
+      database: process.env.MYSQLDATABASE,
       connectionLimit: 10,
     });
 
-    const [rows] = await pool.query("SELECT NOW() AS now");
-    console.log("🗄️ Conectado ao MySQL interno com sucesso!");
-    console.log("🕒 Hora atual:", rows[0].now);
-  } catch (err) {
-    console.error("❌ Erro ao conectar ao MySQL:", err);
-  }
-})();
-
-// === CONFIGURAÇÃO DO BOT ===
-if (!process.env.TOKEN) {
-  console.error("ERRO: TOKEN não encontrado! Configure a variável de ambiente TOKEN.");
-  process.exit(1);
-}
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMessageReactions,
-    GatewayIntentBits.MessageContent,
-  ],
-  partials: [Partials.Message, Partials.Channel, Partials.Reaction],
-});
-
-// === EVENTO DE INICIALIZAÇÃO ===
-client.once("clientReady", () => {
-  console.log(`✅ Bot online como ${client.user.tag}!`);
-});
-
-// === COMANDO: !oi ===
-client.on("messageCreate", async (message) => {
-  if (message.author.bot) return;
-
-  if (message.content === "!oi") {
-    return message.reply("Olá! Eu estou online 😎");
-  }
-
-  // === COMANDO: !dbstatus ===
-  if (message.content === "!dbstatus") {
-    if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator))
-      return message.reply("❌ Apenas administradores podem usar este comando.");
-
-    try {
-      const [rows] = await pool.query("SELECT NOW() AS now");
-      return message.reply(`🟢 Banco de dados MySQL online!\n🕒 Hora atual: ${rows[0].now}`);
-    } catch (err) {
-      console.error(err);
-      return message.reply("❌ Erro ao conectar ao banco de dados!");
-    }
-  }
-
-  // === COMANDO: !setlogs ===
-  if (message.content.startsWith("!setlogs")) {
-    if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator))
-      return message.reply("❌ Apenas administradores podem usar este comando.");
-
-    const logChannel = message.mentions.channels.first();
-    if (!logChannel) return message.reply("⚠️ Usa: `!setlogs #canal`");
-
-    await pool.query(
-      "CREATE TABLE IF NOT EXISTS configs (guild_id VARCHAR(50) PRIMARY KEY, log_channel_id VARCHAR(50))"
-    );
-
-    await pool.query(
-      "INSERT INTO configs (guild_id, log_channel_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE log_channel_id = VALUES(log_channel_id)",
-      [message.guild.id, logChannel.id]
-    );
-
-    return message.reply(`✅ Canal de logs definido para ${logChannel}`);
-  }
-
-  // === COMANDO: !setreaction ===
-  if (message.content.startsWith("!setreaction")) {
-    if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator))
-      return message.reply("❌ Apenas administradores podem usar este comando.");
-
-    const args = message.content.split(" ");
-    const messageId = args[1];
-    const emoji = args[2];
-    const role = message.mentions.roles.first();
-
-    if (!messageId || !emoji || !role)
-      return message.reply("⚠️ Usa: `!setreaction <messageId> <emoji> @cargo`");
-
+    // Cria tabela se não existir
     await pool.query(`
       CREATE TABLE IF NOT EXISTS reactions (
-        guild_id VARCHAR(50),
         message_id VARCHAR(50),
         emoji VARCHAR(100),
         role_id VARCHAR(50)
       )
     `);
 
-    await pool.query(
-      "INSERT INTO reactions (guild_id, message_id, emoji, role_id) VALUES (?, ?, ?, ?)",
-      [message.guild.id, messageId, emoji, role.id]
-    );
+    const [rows] = await pool.query("SELECT NOW() AS now");
+    console.log("🗄️ Conectado ao MySQL com sucesso!");
+    console.log("🕒 Hora atual:", rows[0].now);
+  } catch (err) {
+    console.error("❌ Erro ao conectar ao MySQL:", err);
+  }
+})();
 
-    message.reply(`✅ Reação configurada: ${emoji} → ${role.name}`);
+// 🤖 Inicializa o bot Discord
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.GuildMembers,
+  ],
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction],
+});
+
+client.once("clientReady", () => {
+  console.log(`✅ Bot online como ${client.user.tag}!`);
+});
+
+// 📜 Comando para configurar reação
+client.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
+  if (!message.content.startsWith("!setreaction")) return;
+
+  if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+    return message.reply("❌ Apenas administradores podem usar este comando.");
+  }
+
+  const args = message.content.split(" ");
+  const [msgId, emoji, roleId] = args.slice(1);
+
+  if (!msgId || !emoji || !roleId) {
+    return message.reply("⚠️ Uso correto: `!setreaction <msgId> <emoji> <roleId>`");
+  }
+
+  try {
+    await pool.query("INSERT INTO reactions (message_id, emoji, role_id) VALUES (?, ?, ?)", [
+      msgId,
+      emoji,
+      roleId,
+    ]);
+    message.reply("✅ Reação configurada e salva na base de dados!");
+  } catch (err) {
+    console.error("❌ Erro ao salvar no MySQL:", err);
+    message.reply("⚠️ Erro ao salvar configuração no banco de dados!");
   }
 });
 
-// === EVENTO: Adicionar Reação ===
+// 🎭 Evento de reação
 client.on("messageReactionAdd", async (reaction, user) => {
   if (user.bot) return;
 
-  if (reaction.partial) await reaction.fetch();
+  try {
+    if (reaction.partial) await reaction.fetch();
 
-  const [rows] = await pool.query(
-    "SELECT * FROM reactions WHERE message_id = ? AND emoji = ?",
-    [reaction.message.id, reaction.emoji.name]
-  );
+    const [rows] = await pool.query(
+      "SELECT * FROM reactions WHERE message_id = ? AND emoji = ?",
+      [reaction.message.id, reaction.emoji.name]
+    );
 
-  if (rows.length === 0) return;
-  const config = rows[0];
+    if (rows.length === 0) return;
 
-  const guild = reaction.message.guild;
-  const member = await guild.members.fetch(user.id);
-  const role = guild.roles.cache.get(config.role_id);
+    const guild = reaction.message.guild;
+    const member = await guild.members.fetch(user.id);
+    const role = guild.roles.cache.get(rows[0].role_id);
 
-  if (role) {
-    await member.roles.add(role).catch(console.error);
-    console.log(`✅ ${user.tag} recebeu o cargo ${role.name}`);
+    if (role) {
+      await member.roles.add(role);
+      console.log(`✅ Cargo ${role.name} atribuído a ${user.tag}`);
+    }
+  } catch (err) {
+    console.error("❌ Erro ao adicionar cargo:", err);
   }
 });
 
-// === SERVIDOR WEB (Railway mantém ativo) ===
+// 💻 Express (mantém o bot vivo no Railway)
 const app = express();
 app.get("/", (req, res) => res.send("Bot online! 🚀"));
 app.listen(3000, () => console.log("🌐 Servidor web rodando na porta 3000"));
 
-// === LOGIN ===
-client.login(process.env.TOKEN).catch((error) => {
-  console.error("Erro ao fazer login no Discord:", error);
+// 🚀 Login no Discord
+client.login(process.env.TOKEN).catch((err) => {
+  console.error("❌ Erro ao fazer login no Discord:", err);
 });
