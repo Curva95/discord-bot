@@ -10,7 +10,13 @@ const {
   Routes, 
   SlashCommandBuilder, 
   PermissionFlagsBits,
-  EmbedBuilder
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } = require("discord.js");
 const mysql = require("mysql2/promise");
 const express = require("express");
@@ -63,42 +69,25 @@ const client = new Client({
 });
 
 // ==========================
+// 🔧 CONFIGURAÇÃO MODERAÇÃO (SEMPRE ATIVA)
+// ==========================
+const blockedDomains = [
+  'discord.gg', 'discord.com/invite', 'discordapp.com/invite',
+  'youtube.com', 'youtu.be', 'twitch.tv', 'twitter.com',
+  'instagram.com', 'facebook.com', 'tiktok.com',
+  'bit.ly', 'tinyurl.com', 'goo.gl' // Encurtadores
+];
+
+// Canais onde os links são permitidos (opcional)
+const allowedChannels = [];
+
+// ==========================
 // 🧩 COMANDOS
 // ==========================
 const commands = [
   new SlashCommandBuilder()
     .setName("criarreaction")
-    .setDescription("🎯 Cria mensagem embed com reaction role automática")
-    .addChannelOption(option =>
-      option.setName("canal")
-        .setDescription("Canal onde enviar a mensagem")
-        .setRequired(true)
-    )
-    .addStringOption(option =>
-      option.setName("titulo")
-        .setDescription("Título da mensagem")
-        .setRequired(true)
-    )
-    .addStringOption(option =>
-      option.setName("mensagem")
-        .setDescription("Conteúdo da mensagem (suporta Markdown)")
-        .setRequired(true)
-    )
-    .addStringOption(option =>
-      option.setName("emoji")
-        .setDescription("Emoji para reação")
-        .setRequired(true)
-    )
-    .addRoleOption(option =>
-      option.setName("cargo")
-        .setDescription("Cargo a ser dado")
-        .setRequired(true)
-    )
-    .addStringOption(option =>
-      option.setName("cor")
-        .setDescription("Cor do embed (ex: #FF0000)")
-        .setRequired(false)
-    )
+    .setDescription("🎯 Cria mensagem embed com reaction role (sistema por passos)")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   new SlashCommandBuilder()
@@ -195,6 +184,52 @@ const commands = [
         .setRequired(false)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName("anti-link")
+    .setDescription("🛡️ Configurar sistema anti-links")
+    .addBooleanOption(option =>
+      option.setName("ativo")
+        .setDescription("Ativar/desativar sistema anti-links")
+        .setRequired(false)
+    )
+    .addChannelOption(option =>
+      option.setName("canal_logs")
+        .setDescription("Canal para logs de moderação")
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName("canais_permitidos")
+        .setDescription("IDs de canais onde links são permitidos (separados por vírgula)")
+        .setRequired(false)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName("add-domain")
+    .setDescription("🔗 Adicionar domínio à lista de bloqueio")
+    .addStringOption(option =>
+      option.setName("dominio")
+        .setDescription("Domínio para bloquear (ex: youtube.com)")
+        .setRequired(true)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName("remove-domain")
+    .setDescription("🔓 Remover domínio da lista de bloqueio")
+    .addStringOption(option =>
+      option.setName("dominio")
+        .setDescription("Domínio para remover")
+        .setRequired(true)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName("list-domains")
+    .setDescription("📋 Listar domínios bloqueados")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
 ].map(cmd => cmd.toJSON());
 
 // ==========================
@@ -202,6 +237,7 @@ const commands = [
 // ==========================
 client.once("ready", async () => {
   console.log(`✅ Bot online como ${client.user.tag}!`);
+  console.log(`🛡️ Sistema Anti-Links ATIVADO por padrão!`);
   await initDB();
 
   const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
@@ -228,6 +264,74 @@ client.once("ready", async () => {
 });
 
 // ==========================
+// 🛡️ SISTEMA ANTI-LINKS (SEMPRE ATIVO)
+// ==========================
+client.on("messageCreate", async (message) => {
+  // Ignorar bots e mensagens sem conteúdo
+  if (message.author.bot || !message.content) return;
+  
+  // Verificar se o usuário é administrador
+  if (message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
+  
+  // Verificar se o canal está na lista de permitidos
+  if (allowedChannels.includes(message.channel.id)) return;
+
+  // Expressão regular para detectar URLs
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const hasLink = urlRegex.test(message.content);
+  
+  // Verificar domínios específicos mesmo sem http
+  const domainRegex = new RegExp(
+    `\\b(${blockedDomains.map(domain => domain.replace('.', '\\.')).join('|')})\\b`,
+    'i'
+  );
+  const hasBlockedDomain = domainRegex.test(message.content.toLowerCase());
+
+  if (hasLink || hasBlockedDomain) {
+    try {
+      // Deletar a mensagem
+      await message.delete();
+      
+      // Enviar aviso ao usuário
+      const warningMsg = await message.channel.send({
+        content: `${message.author} ❌ **Links não são permitidos neste servidor!**`,
+        ephemeral: false
+      });
+
+      // Deletar o aviso após 5 segundos
+      setTimeout(async () => {
+        try {
+          await warningMsg.delete();
+        } catch (error) {
+          console.log("Não foi possível deletar mensagem de aviso:", error);
+        }
+      }, 5000);
+
+      // Log da ação
+      console.log(`🛡️ Mensagem com link deletada de ${message.author.tag}: ${message.content}`);
+
+      // Enviar para canal de logs se configurado
+      const [logRows] = await pool.query("SELECT channel_id FROM log_channels WHERE guild_id = ?", [message.guild.id]);
+      if (logRows.length > 0) {
+        const logChannel = message.guild.channels.cache.get(logRows[0].channel_id);
+        if (logChannel) {
+          const embed = new EmbedBuilder()
+            .setTitle("🛡️ Link Bloqueado")
+            .setColor(0xFFA500)
+            .setDescription(`**Usuário:** ${message.author} (${message.author.tag})\n**Canal:** ${message.channel}\n**Mensagem:** \`${message.content.substring(0, 100)}...\``)
+            .setTimestamp();
+
+          await logChannel.send({ embeds: [embed] });
+        }
+      }
+
+    } catch (error) {
+      console.error("❌ Erro ao processar mensagem com link:", error);
+    }
+  }
+});
+
+// ==========================
 // INTERAÇÕES
 // ==========================
 client.on("interactionCreate", async interaction => {
@@ -239,81 +343,75 @@ client.on("interactionCreate", async interaction => {
     return interaction.reply({ content: "❌ Only Admins!", ephemeral: true });
   }
 
-  await interaction.deferReply({ ephemeral: true });
-
-  // Comando: CRIARREACTION
+  // Comando: CRIARREACTION (SISTEMA POR PASSOS)
   if (commandName === "criarreaction") {
-    const canal = interaction.options.getChannel("canal");
-    const titulo = interaction.options.getString("titulo");
-    const mensagem = interaction.options.getString("mensagem");
-    const emojiInput = interaction.options.getString("emoji");
-    const cargo = interaction.options.getRole("cargo");
-    const corInput = interaction.options.getString("cor") || "#5865F2";
-
-    if (!canal.isTextBased()) {
-      return interaction.editReply("❌ O canal precisa ser um canal de texto!");
-    }
-
     try {
-      // Converter cor HEX para número
-      let corNumero;
-      if (corInput.startsWith('#')) {
-        corNumero = parseInt(corInput.replace('#', ''), 16);
-      } else {
-        corNumero = 0x5865F2;
-      }
+      // Criar modal para input passo a passo
+      const modal = new ModalBuilder()
+        .setCustomId('criarreaction_modal')
+        .setTitle('🎯 Criar Reaction Role');
 
-      // Criar embed
-      const embed = new EmbedBuilder()
-        .setTitle(`📜 ${titulo}`)
-        .setDescription(mensagem)
-        .setColor(corNumero)
-        .addFields(
-          {
-            name: '🎯 **Get Your Role**',
-            value: `React with ${emojiInput} below to receive the **${cargo.name}** role and get access to the server!`,
-            inline: false
-          }
-        )
-        .setFooter({ 
-          text: `${interaction.guild.name} • Verification System`,
-          iconURL: interaction.guild.iconURL()
-        })
-        .setThumbnail(interaction.guild.iconURL())
-        .setTimestamp();
+      // Canal
+      const canalInput = new TextInputBuilder()
+        .setCustomId('canal_input')
+        .setLabel("ID do Canal")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder("Ex: 123456789012345678")
+        .setRequired(true);
 
-      // Enviar mensagem
-      const mensagemEmbed = await canal.send({ embeds: [embed] });
-      
-      // Adicionar reação
-      try {
-        await mensagemEmbed.react(emojiInput);
-      } catch (reactError) {
-        await interaction.editReply("❌ Error!");
-        return;
-      }
+      // Título
+      const tituloInput = new TextInputBuilder()
+        .setCustomId('titulo_input')
+        .setLabel("Título do Embed")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder("Ex: Sistema de Verificação")
+        .setRequired(true);
 
-      // Salvar no banco de dados
-      await pool.query(
-        `INSERT INTO reactions (guild_id, message_id, emoji, role_id) 
-         VALUES (?, ?, ?, ?) 
-         ON DUPLICATE KEY UPDATE emoji = ?, role_id = ?`,
-        [interaction.guildId, mensagemEmbed.id, emojiInput, cargo.id, emojiInput, cargo.id]
-      );
+      // Mensagem
+      const mensagemInput = new TextInputBuilder()
+        .setCustomId('mensagem_input')
+        .setLabel("Mensagem/Descrição")
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder("Descreva a mensagem do embed...")
+        .setRequired(true);
 
-      await interaction.editReply(
-        `✅ **Sistema de Reaction Role criado!**\n` +
-        `📝 **Canal:** ${canal}\n` +
-        `🎯 **Emoji:** ${emojiInput}\n` +
-        `👑 **Cargo:** ${cargo.name}\n` +
-        `🆔 **ID da Mensagem:** \`${mensagemEmbed.id}\``
-      );
+      // Emoji
+      const emojiInput = new TextInputBuilder()
+        .setCustomId('emoji_input')
+        .setLabel("Emoji para Reação")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder("Ex: ✅ ou :white_check_mark:")
+        .setRequired(true);
+
+      // Cargo
+      const cargoInput = new TextInputBuilder()
+        .setCustomId('cargo_input')
+        .setLabel("ID do Cargo")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder("Ex: 123456789012345678")
+        .setRequired(true);
+
+      // Adicionar componentes ao modal
+      const firstActionRow = new ActionRowBuilder().addComponents(canalInput);
+      const secondActionRow = new ActionRowBuilder().addComponents(tituloInput);
+      const thirdActionRow = new ActionRowBuilder().addComponents(mensagemInput);
+      const fourthActionRow = new ActionRowBuilder().addComponents(emojiInput);
+      const fifthActionRow = new ActionRowBuilder().addComponents(cargoInput);
+
+      modal.addComponents(firstActionRow, secondActionRow, thirdActionRow, fourthActionRow, fifthActionRow);
+
+      await interaction.showModal(modal);
 
     } catch (err) {
-      console.error("Erro no criarreaction:", err);
-      await interaction.editReply("❌ Erro ao criar o sistema de reaction role!");
+      console.error("Erro ao criar modal:", err);
+      await interaction.reply({ content: "❌ Erro ao iniciar o criador de reaction role!", ephemeral: true });
     }
+    return;
   }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  // ... (outros comandos permanecem iguais)
 
   // Comando: SETREACTION
   else if (commandName === "setreaction") {
@@ -452,7 +550,7 @@ client.on("interactionCreate", async interaction => {
     }
   }
 
-  // Comando: ENVIARMENSAGEM (NOVO)
+  // Comando: ENVIARMENSAGEM
   else if (commandName === "enviarmensagem") {
     const canal = interaction.options.getChannel("canal");
     const titulo = interaction.options.getString("titulo");
@@ -529,6 +627,177 @@ client.on("interactionCreate", async interaction => {
     } catch (err) {
       console.error("Erro no enviarmensagem:", err);
       await interaction.editReply("❌ Erro ao enviar a mensagem. Verifique as URLs fornecidas!");
+    }
+  }
+
+  // Comando: ANTI-LINK
+  else if (commandName === "anti-link") {
+    const ativo = interaction.options.getBoolean("ativo");
+    const canalLogs = interaction.options.getChannel("canal_logs");
+    const canaisPermitidos = interaction.options.getString("canais_permitidos");
+
+    try {
+      if (canalLogs) {
+        await pool.query(
+          `INSERT INTO log_channels (guild_id, channel_id) 
+           VALUES (?, ?) 
+           ON DUPLICATE KEY UPDATE channel_id = ?`,
+          [interaction.guildId, canalLogs.id, canalLogs.id]
+        );
+      }
+
+      // Atualizar canais permitidos
+      if (canaisPermitidos) {
+        const canaisArray = canaisPermitidos.split(',').map(id => id.trim());
+        allowedChannels.length = 0; // Limpar array
+        allowedChannels.push(...canaisArray);
+      }
+
+      const status = "🛡️ **SISTEMA ANTI-LINKS SEMPRE ATIVO**";
+      
+      await interaction.editReply(
+        `${status}\n` +
+        (canalLogs ? `📝 **Canal de logs:** ${canalLogs}\n` : '') +
+        (canaisPermitidos ? `🔓 **Canais permitidos:** ${canaisPermitidos}\n` : '') +
+        `\n**Domínios bloqueados:** ${blockedDomains.length}\n` +
+        `**Usuários administradores podem enviar links.**`
+      );
+
+    } catch (err) {
+      console.error(err);
+      await interaction.editReply("❌ Erro ao configurar sistema anti-links!");
+    }
+  }
+
+  // Comando: ADD-DOMAIN
+  else if (commandName === "add-domain") {
+    const dominio = interaction.options.getString("dominio").toLowerCase();
+
+    try {
+      if (!blockedDomains.includes(dominio)) {
+        blockedDomains.push(dominio);
+        await interaction.editReply(`✅ Domínio \`${dominio}\` adicionado à lista de bloqueio!`);
+      } else {
+        await interaction.editReply(`ℹ️ Domínio \`${dominio}\` já está na lista de bloqueio.`);
+      }
+    } catch (err) {
+      console.error(err);
+      await interaction.editReply("❌ Erro ao adicionar domínio!");
+    }
+  }
+
+  // Comando: REMOVE-DOMAIN
+  else if (commandName === "remove-domain") {
+    const dominio = interaction.options.getString("dominio").toLowerCase();
+
+    try {
+      const index = blockedDomains.indexOf(dominio);
+      if (index > -1) {
+        blockedDomains.splice(index, 1);
+        await interaction.editReply(`✅ Domínio \`${dominio}\` removido da lista de bloqueio!`);
+      } else {
+        await interaction.editReply(`❌ Domínio \`${dominio}\` não encontrado na lista de bloqueio.`);
+      }
+    } catch (err) {
+      console.error(err);
+      await interaction.editReply("❌ Erro ao remover domínio!");
+    }
+  }
+
+  // Comando: LIST-DOMAINS
+  else if (commandName === "list-domains") {
+    try {
+      if (blockedDomains.length === 0) {
+        return interaction.editReply("📭 Nenhum domínio bloqueado.");
+      }
+
+      const lista = blockedDomains.map(domain => `• \`${domain}\``).join('\n');
+      await interaction.editReply(`**📋 Domínios Bloqueados:**\n${lista}`);
+
+    } catch (err) {
+      console.error(err);
+      await interaction.editReply("❌ Erro ao listar domínios!");
+    }
+  }
+});
+
+// ==========================
+// 📝 MODAL SUBMIT (PARA O CRIARREACTION)
+// ==========================
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isModalSubmit()) return;
+
+  if (interaction.customId === 'criarreaction_modal') {
+    await interaction.deferReply({ ephemeral: true });
+
+    try {
+      const canalId = interaction.fields.getTextInputValue('canal_input');
+      const titulo = interaction.fields.getTextInputValue('titulo_input');
+      const mensagem = interaction.fields.getTextInputValue('mensagem_input');
+      const emojiInput = interaction.fields.getTextInputValue('emoji_input');
+      const cargoId = interaction.fields.getTextInputValue('cargo_input');
+
+      // Obter canal e cargo
+      const canal = await interaction.guild.channels.fetch(canalId);
+      const cargo = await interaction.guild.roles.fetch(cargoId);
+
+      if (!canal || !canal.isTextBased()) {
+        return interaction.editReply("❌ Canal não encontrado ou não é um canal de texto!");
+      }
+
+      if (!cargo) {
+        return interaction.editReply("❌ Cargo não encontrado!");
+      }
+
+      // Criar embed
+      const embed = new EmbedBuilder()
+        .setTitle(`📜 ${titulo}`)
+        .setDescription(mensagem)
+        .setColor(0x5865F2)
+        .addFields(
+          {
+            name: '🎯 **Get Your Role**',
+            value: `React with ${emojiInput} below to receive the **${cargo.name}** role and get access to the server!`,
+            inline: false
+          }
+        )
+        .setFooter({ 
+          text: `${interaction.guild.name} • Verification System`,
+          iconURL: interaction.guild.iconURL()
+        })
+        .setThumbnail(interaction.guild.iconURL())
+        .setTimestamp();
+
+      // Enviar mensagem
+      const mensagemEmbed = await canal.send({ embeds: [embed] });
+      
+      // Adicionar reação
+      try {
+        await mensagemEmbed.react(emojiInput);
+      } catch (reactError) {
+        await interaction.editReply("❌ Erro ao adicionar reação! Verifique se o emoji é válido.");
+        return;
+      }
+
+      // Salvar no banco de dados
+      await pool.query(
+        `INSERT INTO reactions (guild_id, message_id, emoji, role_id) 
+         VALUES (?, ?, ?, ?) 
+         ON DUPLICATE KEY UPDATE emoji = ?, role_id = ?`,
+        [interaction.guild.id, mensagemEmbed.id, emojiInput, cargo.id, emojiInput, cargo.id]
+      );
+
+      await interaction.editReply(
+        `✅ **Sistema de Reaction Role criado!**\n` +
+        `📝 **Canal:** ${canal}\n` +
+        `🎯 **Emoji:** ${emojiInput}\n` +
+        `👑 **Cargo:** ${cargo.name}\n` +
+        `🆔 **ID da Mensagem:** \`${mensagemEmbed.id}\``
+      );
+
+    } catch (err) {
+      console.error("Erro no modal criarreaction:", err);
+      await interaction.editReply("❌ Erro ao criar o sistema de reaction role! Verifique os IDs fornecidos.");
     }
   }
 });
