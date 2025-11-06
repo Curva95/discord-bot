@@ -155,6 +155,46 @@ const commands = [
     .setName("sync")
     .setDescription("🔄 Sincroniza comandos no servidor")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName("enviarmensagem")
+    .setDescription("📨 Envia uma mensagem embed personalizada")
+    .addChannelOption(option =>
+      option.setName("canal")
+        .setDescription("Canal onde enviar a mensagem")
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName("titulo")
+        .setDescription("Título do embed")
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName("descricao")
+        .setDescription("Descrição do embed")
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName("cor")
+        .setDescription("Cor do embed (ex: #FF0000 ou vermelho)")
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName("thumbnail")
+        .setDescription("URL da thumbnail")
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName("imagem")
+        .setDescription("URL da imagem principal")
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName("footer")
+        .setDescription("Texto do footer")
+        .setRequired(false)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(cmd => cmd.toJSON());
 
 // ==========================
@@ -300,7 +340,7 @@ client.on("interactionCreate", async interaction => {
     }
   }
 
-  // Comando: REMOVERREACTION (NOVO)
+  // Comando: REMOVERREACTION
   else if (commandName === "removerreaction") {
     const msgId = interaction.options.getString("mensagem_id");
 
@@ -338,7 +378,7 @@ client.on("interactionCreate", async interaction => {
     }
   }
 
-  // Comando: LISTARREACTIONS (NOVO)
+  // Comando: LISTARREACTIONS
   else if (commandName === "listarreactions") {
     try {
       const [rows] = await pool.query(
@@ -367,7 +407,7 @@ client.on("interactionCreate", async interaction => {
     }
   }
 
-  // Comando: setlogchannel
+  // Comando: SETLOGCHANNEL
   else if (commandName === "setlogchannel") {
     const canal = interaction.options.getChannel("canal");
 
@@ -386,7 +426,7 @@ client.on("interactionCreate", async interaction => {
     }
   }
 
-  // Comando: dbstatus
+  // Comando: DBSTATUS
   else if (commandName === "dbstatus") {
     try {
       const [rows] = await pool.query("SELECT NOW() AS now");
@@ -409,6 +449,86 @@ client.on("interactionCreate", async interaction => {
     } catch (err) {
       console.error(err);
       await interaction.editReply("❌ Erro ao sincronizar comandos.");
+    }
+  }
+
+  // Comando: ENVIARMENSAGEM (NOVO)
+  else if (commandName === "enviarmensagem") {
+    const canal = interaction.options.getChannel("canal");
+    const titulo = interaction.options.getString("titulo");
+    const descricao = interaction.options.getString("descricao");
+    const corInput = interaction.options.getString("cor") || "#5865F2";
+    const thumbnail = interaction.options.getString("thumbnail");
+    const imagem = interaction.options.getString("imagem");
+    const footer = interaction.options.getString("footer");
+
+    if (!canal.isTextBased()) {
+      return interaction.editReply("❌ O canal precisa ser um canal de texto!");
+    }
+
+    try {
+      // Converter cor HEX para número
+      let corNumero;
+      if (corInput.startsWith('#')) {
+        corNumero = parseInt(corInput.replace('#', ''), 16);
+      } else {
+        // Cores nomeadas
+        const cores = {
+          'vermelho': 0xFF0000,
+          'azul': 0x0000FF,
+          'verde': 0x00FF00,
+          'amarelo': 0xFFFF00,
+          'roxo': 0x800080,
+          'laranja': 0xFFA500,
+          'rosa': 0xFFC0CB,
+          'cinza': 0x808080
+        };
+        corNumero = cores[corInput.toLowerCase()] || 0x5865F2;
+      }
+
+      // Criar embed
+      const embed = new EmbedBuilder()
+        .setTitle(titulo)
+        .setDescription(descricao)
+        .setColor(corNumero)
+        .setTimestamp();
+
+      // Adicionar thumbnail se fornecida
+      if (thumbnail) {
+        embed.setThumbnail(thumbnail);
+      }
+
+      // Adicionar imagem se fornecida
+      if (imagem) {
+        embed.setImage(imagem);
+      }
+
+      // Adicionar footer se fornecido
+      if (footer) {
+        embed.setFooter({ 
+          text: footer,
+          iconURL: interaction.guild.iconURL()
+        });
+      } else {
+        embed.setFooter({ 
+          text: interaction.guild.name,
+          iconURL: interaction.guild.iconURL()
+        });
+      }
+
+      // Enviar mensagem
+      await canal.send({ embeds: [embed] });
+
+      await interaction.editReply(
+        `✅ **Mensagem enviada com sucesso!**\n` +
+        `📝 **Canal:** ${canal}\n` +
+        `🎨 **Cor:** ${corInput}\n` +
+        `📊 **Preview:** "${titulo}"`
+      );
+
+    } catch (err) {
+      console.error("Erro no enviarmensagem:", err);
+      await interaction.editReply("❌ Erro ao enviar a mensagem. Verifique as URLs fornecidas!");
     }
   }
 });
