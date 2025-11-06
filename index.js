@@ -732,7 +732,7 @@ client.on('interactionCreate', async interaction => {
       const canalId = interaction.fields.getTextInputValue('canal_input');
       const titulo = interaction.fields.getTextInputValue('titulo_input');
       const mensagem = interaction.fields.getTextInputValue('mensagem_input');
-      const emojiInput = interaction.fields.getTextInputValue('emoji_input');
+      let emojiInput = interaction.fields.getTextInputValue('emoji_input');
       const cargoId = interaction.fields.getTextInputValue('cargo_input');
 
       // Obter canal e cargo
@@ -747,6 +747,96 @@ client.on('interactionCreate', async interaction => {
         return interaction.editReply("❌ Cargo não encontrado!");
       }
 
+      // CORRIGIR O EMOJI - CONVERTER :white_check_mark: PARA ✅
+      console.log(`🎯 Emoji recebido: "${emojiInput}"`);
+      
+      let emojiParaUsar = emojiInput;
+      
+      // Se for um nome de emoji (como :white_check_mark:), converter para o emoji real
+      if (emojiInput.startsWith(':') && emojiInput.endsWith(':')) {
+        const emojiName = emojiInput.slice(1, -1); // Remove os :
+        console.log(`🔄 Convertendo nome de emoji: ${emojiName}`);
+        
+        // Mapear nomes comuns para emojis
+        const emojiMap = {
+          'white_check_mark': '✅',
+          'green_circle': '🟢',
+          'red_circle': '🔴',
+          'blue_circle': '🔵',
+          'star': '⭐',
+          'fire': '🔥',
+          'heart': '❤️',
+          'thumbsup': '👍',
+          'thumbsdown': '👎',
+          'warning': '⚠️',
+          'information_source': 'ℹ️',
+          'x': '❌',
+          'o': '⭕',
+          'arrow_up': '⬆️',
+          'arrow_down': '⬇️',
+          'arrow_left': '⬅️',
+          'arrow_right': '➡️',
+          'play_pause': '⏯️',
+          'stop_button': '⏹️',
+          'record_button': '⏺️',
+          'previous_track': '⏮️',
+          'next_track': '⏭️',
+          'pause_button': '⏸️',
+          'play_button': '▶️',
+          'gear': '⚙️',
+          'hammer_and_wrench': '🛠️',
+          'key': '🔑',
+          'lock': '🔒',
+          'unlock': '🔓',
+          'bell': '🔔',
+          'mega': '📣',
+          'loud_sound': '🔊',
+          'sound': '🔉',
+          'mute': '🔇',
+          'bookmark': '🔖',
+          'link': '🔗',
+          'radio_button': '🔘',
+          'back': '🔙',
+          'end': '🔚',
+          'on': '🔛',
+          'soon': '🔜',
+          'top': '🔝',
+          'eyes': '👀',
+          'brain': '🧠',
+          'muscle': '💪',
+          'punch': '👊',
+          'wave': '👋',
+          'clap': '👏',
+          'pray': '🙏',
+          'writing_hand': '✍️',
+          'nail_care': '💅',
+          'ear': '👂',
+          'nose': '👃',
+          'footprints': '👣',
+          'eyes': '👀',
+          'brain': '🧠',
+          'bone': '🦴',
+          'tooth': '🦷',
+          'horn': '🪈'
+        };
+        
+        if (emojiMap[emojiName]) {
+          emojiParaUsar = emojiMap[emojiName];
+          console.log(`✅ Convertido para: ${emojiParaUsar}`);
+        } else {
+          // Se não encontrar no mapa, tentar usar o emoji padrão
+          emojiParaUsar = '✅';
+          console.log(`⚠️ Nome não encontrado, usando fallback: ${emojiParaUsar}`);
+        }
+      }
+      
+      // Verificar se é um emoji custom (formato: <:name:id>)
+      const customEmojiMatch = emojiInput.match(/<a?:(\w+):(\d+)>/);
+      if (customEmojiMatch) {
+        console.log(`🎯 É um emoji custom: ${emojiInput}`);
+        emojiParaUsar = emojiInput; // Manter o formato original para custom emojis
+      }
+
       // Criar embed
       const embed = new EmbedBuilder()
         .setTitle(`📜 ${titulo}`)
@@ -755,7 +845,7 @@ client.on('interactionCreate', async interaction => {
         .addFields(
           {
             name: '🎯 **Get Your Role**',
-            value: `React with ${emojiInput} below to receive the **${cargo.name}** role and get access to the server!`,
+            value: `React with ${emojiParaUsar} below to receive the **${cargo.name}** role and get access to the server!`,
             inline: false
           }
         )
@@ -769,71 +859,50 @@ client.on('interactionCreate', async interaction => {
       // Enviar mensagem
       const mensagemEmbed = await canal.send({ embeds: [embed] });
       
-      // Adicionar reação - MÉTODO CORRIGIDO
+      // ADICIONAR REAÇÃO - VERSÃO CORRIGIDA
       try {
-        // Tentar converter o emoji
-        let emojiParaReagir;
+        console.log(`🎯 Tentando adicionar reação: "${emojiParaUsar}"`);
         
-        // Verificar se é um emoji custom (formato: <:name:id>)
-        const customEmojiMatch = emojiInput.match(/<a?:(\w+):(\d+)>/);
+        // Se for emoji custom, usar o formato completo
         if (customEmojiMatch) {
-          // É um emoji custom - usar o ID
-          emojiParaReagir = customEmojiMatch[2];
-        } 
-        // Verificar se é um emoji unicode (caracteres especiais)
-        else if (/[\u{1F300}-\u{1F9FF}]/u.test(emojiInput)) {
-          // É um emoji unicode - usar o texto diretamente
-          emojiParaReagir = emojiInput;
+          await mensagemEmbed.react(customEmojiMatch[2]); // Usar o ID do emoji
+        } else {
+          // Para emojis padrão, usar diretamente
+          await mensagemEmbed.react(emojiParaUsar);
         }
-        // Verificar se é um emoji pelo nome (formato: :emoji_name:)
-        else if (emojiInput.startsWith(':') && emojiInput.endsWith(':')) {
-          // Remover os : e tentar encontrar o emoji no servidor
-          const emojiName = emojiInput.slice(1, -1);
-          const emoji = interaction.guild.emojis.cache.find(e => e.name === emojiName);
-          if (emoji) {
-            emojiParaReagir = emoji.id;
-          } else {
-            // Se não encontrar, usar o texto como fallback
-            emojiParaReagir = emojiInput;
-          }
-        }
-        else {
-          // Tentativa padrão
-          emojiParaReagir = emojiInput;
-        }
-
-        console.log(`🎯 Tentando adicionar reação: ${emojiParaReagir}`);
-        await mensagemEmbed.react(emojiParaReagir);
-        console.log(`✅ Reação adicionada com sucesso: ${emojiParaReagir}`);
-
+        
+        console.log(`✅ Reação adicionada com sucesso!`);
+        
       } catch (reactError) {
         console.error("❌ Erro ao adicionar reação:", reactError);
         
-        // Tentar método alternativo
+        // Fallback: sempre usar ✅ se der erro
         try {
-          console.log("🔄 Tentando método alternativo...");
-          // Limpar o emoji - remover caracteres especiais
-          const emojiLimpo = emojiInput.replace(/[<>]/g, '').trim();
-          await mensagemEmbed.react(emojiLimpo);
-          console.log(`✅ Reação adicionada com método alternativo: ${emojiLimpo}`);
-        } catch (error2) {
-          await interaction.editReply("❌ Erro ao adicionar reação! Verifique se o emoji é válido e está disponível no servidor.");
-          return;
+          console.log(`🔄 Tentando fallback com ✅`);
+          await mensagemEmbed.react('✅');
+          emojiParaUsar = '✅';
+          console.log(`✅ Fallback adicionado com sucesso!`);
+        } catch (errorFallback) {
+          console.error("❌ Erro crítico no fallback:", errorFallback);
+          await interaction.editReply(
+            "⚠️ **Mensagem criada, mas não foi possível adicionar reação automática.**\n" +
+            "Por favor, adicione manualmente a reação ✅ na mensagem."
+          );
         }
       }
 
-      // Salvar no banco de dados - CORRIGIDO para usar emojiInput original
+      // Salvar no banco de dados
       await pool.query(
         `INSERT INTO reactions (guild_id, message_id, emoji, role_id) 
          VALUES (?, ?, ?, ?) 
          ON DUPLICATE KEY UPDATE emoji = ?, role_id = ?`,
-        [interaction.guild.id, mensagemEmbed.id, emojiInput, cargo.id, emojiInput, cargo.id]
+        [interaction.guild.id, mensagemEmbed.id, emojiParaUsar, cargo.id, emojiParaUsar, cargo.id]
       );
 
       await interaction.editReply(
-        `✅ **Sistema de Reaction Role criado!**\n` +
+        `✅ **Sistema de Reaction Role criado com sucesso!**\n` +
         `📝 **Canal:** ${canal}\n` +
-        `🎯 **Emoji:** ${emojiInput}\n` +
+        `🎯 **Emoji:** ${emojiParaUsar}\n` +
         `👑 **Cargo:** ${cargo.name}\n` +
         `🆔 **ID da Mensagem:** \`${mensagemEmbed.id}\``
       );
