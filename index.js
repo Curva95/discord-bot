@@ -411,10 +411,8 @@ client.on("interactionCreate", async interaction => {
 
   await interaction.deferReply({ ephemeral: true });
 
-  // ... (outros comandos permanecem iguais)
-
   // Comando: SETREACTION
-  else if (commandName === "setreaction") {
+  if (commandName === "setreaction") {
     const msgId = interaction.options.getString("mensagem_id");
     const emoji = interaction.options.getString("emoji");
     const role = interaction.options.getRole("cargo");
