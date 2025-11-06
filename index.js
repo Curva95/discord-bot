@@ -720,7 +720,7 @@ client.on("interactionCreate", async interaction => {
 });
 
 // ==========================
-// 📝 MODAL SUBMIT (PARA O CRIARREACTION)
+// 📝 MODAL SUBMIT (PARA O CRIARREACTION) - VERSÃO CORRIGIDA
 // ==========================
 client.on('interactionCreate', async interaction => {
   if (!interaction.isModalSubmit()) return;
@@ -769,15 +769,60 @@ client.on('interactionCreate', async interaction => {
       // Enviar mensagem
       const mensagemEmbed = await canal.send({ embeds: [embed] });
       
-      // Adicionar reação
+      // Adicionar reação - MÉTODO CORRIGIDO
       try {
-        await mensagemEmbed.react(emojiInput);
+        // Tentar converter o emoji
+        let emojiParaReagir;
+        
+        // Verificar se é um emoji custom (formato: <:name:id>)
+        const customEmojiMatch = emojiInput.match(/<a?:(\w+):(\d+)>/);
+        if (customEmojiMatch) {
+          // É um emoji custom - usar o ID
+          emojiParaReagir = customEmojiMatch[2];
+        } 
+        // Verificar se é um emoji unicode (caracteres especiais)
+        else if (/[\u{1F300}-\u{1F9FF}]/u.test(emojiInput)) {
+          // É um emoji unicode - usar o texto diretamente
+          emojiParaReagir = emojiInput;
+        }
+        // Verificar se é um emoji pelo nome (formato: :emoji_name:)
+        else if (emojiInput.startsWith(':') && emojiInput.endsWith(':')) {
+          // Remover os : e tentar encontrar o emoji no servidor
+          const emojiName = emojiInput.slice(1, -1);
+          const emoji = interaction.guild.emojis.cache.find(e => e.name === emojiName);
+          if (emoji) {
+            emojiParaReagir = emoji.id;
+          } else {
+            // Se não encontrar, usar o texto como fallback
+            emojiParaReagir = emojiInput;
+          }
+        }
+        else {
+          // Tentativa padrão
+          emojiParaReagir = emojiInput;
+        }
+
+        console.log(`🎯 Tentando adicionar reação: ${emojiParaReagir}`);
+        await mensagemEmbed.react(emojiParaReagir);
+        console.log(`✅ Reação adicionada com sucesso: ${emojiParaReagir}`);
+
       } catch (reactError) {
-        await interaction.editReply("❌ Erro ao adicionar reação! Verifique se o emoji é válido.");
-        return;
+        console.error("❌ Erro ao adicionar reação:", reactError);
+        
+        // Tentar método alternativo
+        try {
+          console.log("🔄 Tentando método alternativo...");
+          // Limpar o emoji - remover caracteres especiais
+          const emojiLimpo = emojiInput.replace(/[<>]/g, '').trim();
+          await mensagemEmbed.react(emojiLimpo);
+          console.log(`✅ Reação adicionada com método alternativo: ${emojiLimpo}`);
+        } catch (error2) {
+          await interaction.editReply("❌ Erro ao adicionar reação! Verifique se o emoji é válido e está disponível no servidor.");
+          return;
+        }
       }
 
-      // Salvar no banco de dados
+      // Salvar no banco de dados - CORRIGIDO para usar emojiInput original
       await pool.query(
         `INSERT INTO reactions (guild_id, message_id, emoji, role_id) 
          VALUES (?, ?, ?, ?) 
